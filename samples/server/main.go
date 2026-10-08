@@ -11,26 +11,21 @@ package main
 import (
 	"context"
 	"database/sql"
-	"embed"
 	"flag"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/riverqueue/river"
 
 	"github.com/timwmillard/golite/api"
-	"github.com/timwmillard/golite/migrate"
+	"github.com/timwmillard/golite/samples/server/migrations"
 	"github.com/timwmillard/golite/server"
+	"github.com/timwmillard/golite/sqlite"
 )
-
-//go:embed migrations/*.sql
-var migrationsFS embed.FS
 
 func main() {
 	if err := run(context.Background()); err != nil {
@@ -48,7 +43,7 @@ func run(ctx context.Context) error {
 	}
 	log := cfg.Logger
 
-	db, err := openDB(ctx, *dataDir)
+	db, err := sqlite.Open(ctx, filepath.Join(*dataDir, "app.db"), migrations.FS)
 	if err != nil {
 		return err
 	}
@@ -63,34 +58,12 @@ func run(ctx context.Context) error {
 		return err
 	}
 
+	// GET /health is registered by server.New since cfg.DB is set.
 	h := &handlers{db: db, river: srv.River}
-	srv.Mux.HandleFunc("GET /health", h.health)
 	srv.Mux.HandleFunc("GET /api/greetings", h.listGreetings)
 	srv.Mux.HandleFunc("POST /api/greetings", h.createGreeting)
 
 	return srv.Run(ctx) // blocks until SIGINT/SIGTERM
-}
-
-func openDB(ctx context.Context, dataDir string) (*sql.DB, error) {
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create data dir: %w", err)
-	}
-
-	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "app.db"))
-	if err != nil {
-		return nil, fmt.Errorf("open db: %w", err)
-	}
-	// SQLite allows one writer at a time; a single connection avoids
-	// SQLITE_BUSY between the app and River.
-	db.SetMaxOpenConns(1)
-
-	migrations, _ := fs.Sub(migrationsFS, "migrations") // only errors on an invalid path
-	if err := migrate.Apply(ctx, db, migrations); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate: %w", err)
-	}
-
-	return db, nil
 }
 
 // GreetArgs is a River job that stores a greeting for Name.
@@ -124,14 +97,6 @@ type handlers struct {
 	river *river.Client[*sql.Tx]
 }
 
-func (h *handlers) health(w http.ResponseWriter, r *http.Request) {
-	if err := h.db.PingContext(r.Context()); err != nil {
-		api.WriteError(w, http.StatusServiceUnavailable, "database unavailable")
-		return
-	}
-	api.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
 type greeting struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
@@ -143,8 +108,7 @@ func (h *handlers) listGreetings(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.QueryContext(r.Context(),
 		`select id, name, message, created_at from greetings order by id desc limit 100`)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "List greetings", "err", err)
-		api.WriteError(w, http.StatusInternalServerError, "internal error")
+		api.InternalError(w, r, "List greetings", err)
 		return
 	}
 	defer rows.Close()
@@ -157,8 +121,7 @@ func (h *handlers) listGreetings(w http.ResponseWriter, r *http.Request) {
 			createdAt int64
 		)
 		if err := rows.Scan(&id, &g.Name, &g.Message, &createdAt); err != nil {
-			slog.ErrorContext(r.Context(), "Scan greeting", "err", err)
-			api.WriteError(w, http.StatusInternalServerError, "internal error")
+			api.InternalError(w, r, "Scan greeting", err)
 			return
 		}
 		g.ID = api.FormatID(id)
@@ -166,8 +129,7 @@ func (h *handlers) listGreetings(w http.ResponseWriter, r *http.Request) {
 		out = append(out, g)
 	}
 	if err := rows.Err(); err != nil {
-		slog.ErrorContext(r.Context(), "List greetings", "err", err)
-		api.WriteError(w, http.StatusInternalServerError, "internal error")
+		api.InternalError(w, r, "List greetings", err)
 		return
 	}
 
@@ -187,8 +149,7 @@ func (h *handlers) createGreeting(w http.ResponseWriter, r *http.Request) {
 
 	res, err := h.river.Insert(r.Context(), req, nil)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "Enqueue greet job", "err", err)
-		api.WriteError(w, http.StatusInternalServerError, "internal error")
+		api.InternalError(w, r, "Enqueue greet job", err)
 		return
 	}
 

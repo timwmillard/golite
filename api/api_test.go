@@ -1,7 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"database/sql"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -21,6 +24,29 @@ func TestWriteJSONAndError(t *testing.T) {
 	}
 	if body := strings.TrimSpace(rec.Body.String()); body != `{"error":"farm not found"}` {
 		t.Errorf("body = %s", body)
+	}
+}
+
+func TestInternalError(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/farms", nil)
+	InternalError(rec, r, "List farms", errors.New("no such table: farms"))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != `{"error":"internal error"}` {
+		t.Errorf("body = %s", body)
+	}
+	for _, want := range []string{`msg="List farms"`, `err="no such table: farms"`, "method=GET", "path=/farms"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("log missing %s: %s", want, logs.String())
+		}
 	}
 }
 

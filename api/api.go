@@ -6,6 +6,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,6 +22,14 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 // WriteError writes {"error": message} with the given status.
 func WriteError(w http.ResponseWriter, status int, message string) {
 	WriteJSON(w, status, map[string]string{"error": message})
+}
+
+// InternalError logs err with msg via slog's default logger, along with the
+// request's method and path, and writes a 500 with a generic message so the
+// error's details never reach the client.
+func InternalError(w http.ResponseWriter, r *http.Request, msg string, err error) {
+	slog.ErrorContext(r.Context(), msg, "err", err, "method", r.Method, "path", r.URL.Path)
+	WriteError(w, http.StatusInternalServerError, "internal error")
 }
 
 // DecodeJSON decodes the JSON request body into v and closes the body.

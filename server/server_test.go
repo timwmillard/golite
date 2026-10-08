@@ -97,3 +97,54 @@ func TestRun_WorksRiverJobs(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 }
+
+func TestHealth(t *testing.T) {
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+
+	srv, err := New(t.Context(), Config{DB: db})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	get := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		srv.Mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+		return rec
+	}
+
+	if rec := get(); rec.Code != http.StatusOK {
+		t.Errorf("healthy /health = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	db.Close()
+	if rec := get(); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("closed db /health = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestHealth_Disabled(t *testing.T) {
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	srv, err := New(t.Context(), Config{DB: db, DisableHealth: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// The app can register its own without a duplicate-pattern panic.
+	srv.Mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	})
+
+	rec := httptest.NewRecorder()
+	srv.Mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if rec.Code != http.StatusTeapot {
+		t.Errorf("/health = %d, want app's handler", rec.Code)
+	}
+}

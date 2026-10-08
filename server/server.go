@@ -51,7 +51,12 @@ type Config struct {
 	ShutdownTimeout time.Duration
 
 	// DB is the database River stores jobs in. Required if Workers is set.
+	// When set, the server also serves GET /health, which pings it.
 	DB *sql.DB
+
+	// DisableHealth stops New from registering GET /health, so the app can
+	// register its own.
+	DisableHealth bool
 
 	// Workers enables River. Leave nil for a plain HTTP server.
 	Workers *river.Workers
@@ -96,6 +101,10 @@ func New(ctx context.Context, cfg Config) (*Server, error) {
 	}
 
 	s := &Server{Mux: http.NewServeMux(), cfg: cfg}
+
+	if cfg.DB != nil && !cfg.DisableHealth {
+		s.Mux.HandleFunc("GET /health", s.health)
+	}
 
 	if cfg.Workers == nil {
 		if cfg.RiverUI {
@@ -169,6 +178,19 @@ func (s *Server) setupRiverUI() error {
 	}
 
 	return nil
+}
+
+// health reports whether the database is reachable: 200 {"status":"ok"} or
+// 503 {"status":"unavailable"}.
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	status, body := http.StatusOK, `{"status":"ok"}`
+	if err := s.cfg.DB.PingContext(r.Context()); err != nil {
+		s.cfg.Logger.ErrorContext(r.Context(), "Health check failed", "err", err)
+		status, body = http.StatusServiceUnavailable, `{"status":"unavailable"}`
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	io.WriteString(w, body+"\n")
 }
 
 // Run starts River (if configured) and the HTTP server, and blocks until ctx

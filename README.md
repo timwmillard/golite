@@ -4,9 +4,10 @@ Utility packages for my default Go + SQLite setup.
 
 | Package | |
 |---|---|
+| `sqlite` | Opens a SQLite database (creating its directory), limits it to one connection, and applies migrations |
 | `migrate` | Forward-only `NNNN_name.sql` migrations from an `fs.FS`, plus optional `pragmas.sql` |
-| `server` | HTTP server with graceful shutdown, config from `.env` / env vars / flags, optional River job queue and RiverUI |
-| `api` | JSON responses/errors, request decoding, string IDs, and `sql.Null*` ↔ pointer conversions |
+| `server` | HTTP server with graceful shutdown, config from `.env` / env vars / flags, `GET /health`, optional River job queue and RiverUI |
+| `api` | JSON responses/errors (including logged 500s), request decoding, string IDs, and `sql.Null*` ↔ pointer conversions |
 | `colorlog` | Colored `slog.Handler`, plus `cmd/colorlog` to pretty-print JSON logs |
 
 ```go
@@ -16,9 +17,8 @@ if err := cfg.Parse(); err != nil { // defaults < .env < env vars < flags
 	log.Fatal(err)
 }
 
-db, err := sql.Open("sqlite3", filepath.Join(*dataDir, "app.db"))
-db.SetMaxOpenConns(1)
-err = migrate.Apply(ctx, db, migrations.FS) // pragmas live in migrations/pragmas.sql
+// migrations.FS is an embed.FS; pragmas live in migrations/pragmas.sql
+db, err := sqlite.Open(ctx, filepath.Join(*dataDir, "app.db"), migrations.FS)
 
 workers := river.NewWorkers()
 river.AddWorker(workers, &worker.Hello{})
@@ -28,3 +28,5 @@ srv, err := server.New(ctx, cfg)
 srv.Mux.Handle("/api/", api.NewRouter(db, srv.River))
 err = srv.Run(ctx) // blocks until SIGINT/SIGTERM
 ```
+
+See [`samples/server`](samples/server) for a complete, runnable app.
