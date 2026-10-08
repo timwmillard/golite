@@ -3,6 +3,7 @@ module github.com/timwmillard/golite
 go 1.26.3
 
 require (
+	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.48
 	github.com/riverqueue/river v0.42.0
 	github.com/riverqueue/river/riverdriver/riversqlite v0.42.0

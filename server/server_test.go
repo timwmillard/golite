@@ -2,15 +2,15 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
 
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/riverqueue/river"
-
-	"github.com/timwmillard/golite/sqlite"
 )
 
 type pingArgs struct{}
@@ -49,11 +49,12 @@ func TestRun_StopsOnContextCancel(t *testing.T) {
 }
 
 func TestRun_WorksRiverJobs(t *testing.T) {
-	db, err := sqlite.Open(t.Context(), filepath.Join(t.TempDir(), "test.db"), nil)
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
-		t.Fatalf("sqlite.Open: %v", err)
+		t.Fatalf("open db: %v", err)
 	}
 	defer db.Close()
+	db.SetMaxOpenConns(1)
 
 	worker := &pingWorker{done: make(chan struct{})}
 	workers := river.NewWorkers()

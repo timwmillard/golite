@@ -1,12 +1,15 @@
 // Package server runs an HTTP server with graceful shutdown and, optionally,
 // a River job queue backed by the same SQLite database.
 //
-//	srv, err := server.New(ctx, server.Config{DB: db, Workers: workers, RiverUI: true})
+//	cfg := server.Config{Port: 7880, DB: db, Workers: workers, RiverUI: true}
+//	if err := cfg.Parse(); err != nil { ... } // .env, env vars, then flags
+//	srv, err := server.New(ctx, cfg)
 //	srv.Mux.Handle("/api/", api(srv.River))
 //	err = srv.Run(ctx)
 package server
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -28,8 +31,17 @@ import (
 // Config configures a Server. Only fields that are set are used; everything
 // else falls back to a default.
 type Config struct {
-	// Addr is the listen address. Defaults to ":8080".
+	// Addr is the listen address. Defaults to ":<Port>".
 	Addr string
+
+	// Port is used when Addr is empty. Defaults to 8080. Set by -port / PORT.
+	Port int
+
+	// LogFormat is "color", "text" or "json", and LogLevel the minimum level
+	// logged. Parse builds Logger from them. Set by -log / LOG and
+	// -log-level / LOG_LEVEL.
+	LogFormat string
+	LogLevel  slog.Level
 
 	// Logger is used by the server and River. Defaults to slog.Default().
 	Logger *slog.Logger
@@ -49,7 +61,9 @@ type Config struct {
 	Queues map[string]river.QueueConfig
 
 	// RiverUI mounts the River dashboard at /riverui/. If RiverUIUsername
-	// and RiverUIPassword are both set, it's behind basic auth.
+	// and RiverUIPassword are both set, it's behind basic auth. Parse fills
+	// the credentials from RIVERUI_USERNAME and RIVERUI_PASSWORD (env only,
+	// so the password never shows up in ps).
 	RiverUI         bool
 	RiverUIUsername string
 	RiverUIPassword string
@@ -72,7 +86,7 @@ type Server struct {
 // migrations to cfg.DB and creates the River client.
 func New(ctx context.Context, cfg Config) (*Server, error) {
 	if cfg.Addr == "" {
-		cfg.Addr = ":8080"
+		cfg.Addr = fmt.Sprintf(":%d", cmp.Or(cfg.Port, 8080))
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
