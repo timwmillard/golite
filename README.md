@@ -6,7 +6,7 @@ Utility packages for my default Go + SQLite setup.
 |---|---|
 | `migrate` | Forward-only `NNNN_name.sql` migrations from an `fs.FS`, plus optional `pragmas.sql` |
 | `server` | HTTP server with graceful shutdown, config from `.env` / env vars / flags, optional River job queue and RiverUI |
-| `httpjson` | JSON responses/errors, request decoding, string IDs, and `sql.Null*` ↔ pointer conversions |
+| `api` | JSON responses/errors, request decoding, string IDs, and `sql.Null*` ↔ pointer conversions |
 | `colorlog` | Colored `slog.Handler`, plus `cmd/colorlog` to pretty-print JSON logs |
 
 ```go
