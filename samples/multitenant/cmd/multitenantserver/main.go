@@ -14,8 +14,10 @@
 //	curl -X DELETE localhost:7880/v1/tenants/acme
 //	open localhost:7880/riverui/
 //
-// After a deploy that adds tenant migrations, bring every tenant's database
-// up to date (otherwise each is migrated when next used):
+// Each tenant's database is migrated when it's opened. On startup the
+// server also migrates every tenant in the background, so ones not in use
+// are brought up to date and a failing migration is logged soon after a
+// deploy. To do that up front instead, then exit:
 //
 //	go run ./cmd/multitenantserver -migrate-tenants
 package main
@@ -23,11 +25,13 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/riverqueue/river"
@@ -90,6 +94,20 @@ func run(ctx context.Context) error {
 	}
 	api.Register(srv.Mux, master, dbs, srv.River)
 
+	// Stopped when Run returns, and waited for before dbs.Close.
+	bgCtx, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	defer cancel()
+	wg.Go(func() {
+		err := migrateAll(bgCtx, master, dbs)
+		if errors.Is(err, context.Canceled) {
+			slog.Info("Tenant migration stopped by shutdown")
+		} else if err != nil {
+			slog.Error("Tenant migration failed", "err", err)
+		}
+	})
+
 	return srv.Run(ctx) // blocks until SIGINT/SIGTERM
 }
 
@@ -100,11 +118,11 @@ func migrateAll(ctx context.Context, master *sql.DB, dbs *tenant.DBs) error {
 		return fmt.Errorf("list tenants: %w", err)
 	}
 
+	start := time.Now()
 	slog.Info("Migrating tenants", "count", len(ids))
-	err = dbs.MigrateAll(ctx, conv.FormatIDs(ids))
-	if err != nil {
+	if err := dbs.MigrateAll(ctx, conv.FormatIDs(ids)); err != nil {
 		return err
 	}
-	slog.Info("Migrated tenants", "count", len(ids))
+	slog.Info("Migrated tenants", "count", len(ids), "took", time.Since(start).Round(time.Millisecond))
 	return nil
 }

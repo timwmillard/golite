@@ -196,8 +196,8 @@ func TestMigrateAll(t *testing.T) {
 	if err := d.MigrateAll(t.Context(), ids); err != nil {
 		t.Fatalf("MigrateAll: %v", err)
 	}
-	if s := d.Stats(); s.Open > 2 || s.InUse != 0 {
-		t.Errorf("Stats = %+v, want <= 2 open (MaxOpen), 0 in use", s)
+	if s := d.Stats(); s.Open != 0 {
+		t.Errorf("Stats = %+v after MigrateAll, want nothing left open", s)
 	}
 	for _, id := range ids {
 		err := d.Do(t.Context(), id, func(db *sql.DB) error {
@@ -207,6 +207,64 @@ func TestMigrateAll(t *testing.T) {
 		if err != nil {
 			t.Errorf("tenant %s not migrated: %v", id, err)
 		}
+	}
+}
+
+// A run over many tenants mustn't push the ones in use out of the open
+// set, nor reorder them.
+func TestMigrateAll_KeepsHotTenantsOpen(t *testing.T) {
+	d := newDBs(t, Config{MaxOpen: 2})
+
+	h1, release := acquire(t, d, "hot1")
+	release()
+	h2, release := acquire(t, d, "hot2") // more recently used than hot1
+	release()
+	if err := d.MigrateAll(t.Context(), []string{"c1", "hot1", "c2", "c3", "hot2", "c4"}); err != nil {
+		t.Fatalf("MigrateAll: %v", err)
+	}
+	if isClosed(h1) || isClosed(h2) {
+		t.Fatal("MigrateAll closed a tenant that was open")
+	}
+	if s := d.Stats(); s.Open != 2 {
+		t.Errorf("Stats = %+v, want just the 2 hot tenants open", s)
+	}
+
+	// hot1 is still the least recently used, so it's the one evicted.
+	_, release = acquire(t, d, "c1")
+	release()
+	if !isClosed(h1) || isClosed(h2) {
+		t.Error("MigrateAll changed the LRU order of open tenants")
+	}
+}
+
+// A database MigrateAll opened stays open if a request starts using it.
+func TestMigrateAll_ColdBecomesHot(t *testing.T) {
+	d := newDBs(t, Config{})
+
+	_, releaseMigrate, err := d.acquire(t.Context(), "acme", modeMigrate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, release := acquire(t, d, "acme")
+	releaseMigrate()
+	release()
+	if isClosed(db) {
+		t.Error("cold database closed though a request used it")
+	}
+	if s := d.Stats(); s.Open != 1 {
+		t.Errorf("Stats = %+v, want 1 open", s)
+	}
+}
+
+func TestMigrateAll_StopsWithContext(t *testing.T) {
+	d := newDBs(t, Config{})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := d.MigrateAll(ctx, []string{"a", "b"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("MigrateAll with cancelled ctx = %v, want Canceled", err)
+	}
+	if _, _, err := d.Acquire(t.Context(), "a"); !errors.Is(err, ErrNotExist) {
+		t.Error("MigrateAll created a tenant after ctx was done")
 	}
 }
 

@@ -107,7 +107,21 @@ type entry struct {
 
 	deleting bool
 	unused   chan struct{} // closed when users drops to 0 during a Delete
+
+	// cold marks a database MigrateAll opened just to migrate: it's closed
+	// when released rather than kept as most recently used, unless a real
+	// Acquire uses it meanwhile.
+	cold bool
 }
+
+// mode is how acquire is being used.
+type mode int
+
+const (
+	modeUse     mode = iota // Acquire: the database must exist
+	modeCreate              // Create: create it if needed
+	modeMigrate             // MigrateAll: create it if needed, don't keep it open
+)
 
 // New returns a DBs and, unless IdleTimeout is negative, starts a goroutine
 // that closes idle databases; Close stops it.
@@ -155,13 +169,13 @@ func (d *DBs) Path(id string) (string, error) {
 // one tenant doesn't block the others. A failed open is retried by the
 // next Acquire.
 func (d *DBs) Acquire(ctx context.Context, id string) (db *sql.DB, release func(), err error) {
-	return d.acquire(ctx, id, false)
+	return d.acquire(ctx, id, modeUse)
 }
 
 // Create creates tenant id's database, if it doesn't exist, and migrates
 // it. It leaves the database open but idle.
 func (d *DBs) Create(ctx context.Context, id string) error {
-	_, release, err := d.acquire(ctx, id, true)
+	_, release, err := d.acquire(ctx, id, modeCreate)
 	if err != nil {
 		return err
 	}
@@ -170,25 +184,35 @@ func (d *DBs) Create(ctx context.Context, id string) error {
 }
 
 // MigrateAll applies pending migrations to each tenant in ids, creating any
-// database that doesn't exist yet, one tenant at a time so it stays within
-// MaxOpen. Run it after a deploy so tenants that aren't being used still get
-// new migrations; otherwise they only get them when next opened. It keeps
-// going past a tenant that fails, and returns all the failures; it stops
-// early only if ctx is done.
+// database that doesn't exist yet. Tenants are opened only to be migrated
+// and closed again, one at a time, so a run over thousands of tenants
+// doesn't push the tenants in actual use out of the open set; tenants
+// already open were migrated when they opened and are skipped.
+//
+// Tenants are migrated whenever they're opened anyway, so this isn't needed
+// for correctness. It's for running in the background after a deploy, so
+// tenants that aren't being used get new migrations, and a failing
+// migration shows up then rather than on some tenant's first request days
+// later. It keeps going past a tenant that fails, and returns all the
+// failures; it stops early only if ctx is done, after finishing the tenant
+// it's on.
 func (d *DBs) MigrateAll(ctx context.Context, ids []string) error {
 	var errs []error
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(append(errs, err)...)
 		}
-		if err := d.Create(ctx, id); err != nil {
+		_, release, err := d.acquire(ctx, id, modeMigrate)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("tenant %s: %w", id, err))
+			continue
 		}
+		release()
 	}
 	return errors.Join(errs...)
 }
 
-func (d *DBs) acquire(ctx context.Context, id string, create bool) (db *sql.DB, release func(), err error) {
+func (d *DBs) acquire(ctx context.Context, id string, mode mode) (db *sql.DB, release func(), err error) {
 	path, err := d.Path(id)
 	if err != nil {
 		return nil, nil, err
@@ -204,8 +228,15 @@ func (d *DBs) acquire(ctx context.Context, id string, create bool) (db *sql.DB, 
 		d.mu.Unlock()
 		return nil, nil, ErrDeleting
 	}
+	if ok && mode == modeMigrate {
+		// Open (or being opened), so migrated by whoever opened it. Leave
+		// its place in the idle list alone.
+		d.mu.Unlock()
+		return nil, func() {}, nil
+	}
 	if ok {
 		d.use(e)
+		e.cold = false
 		d.mu.Unlock()
 
 		select {
@@ -221,16 +252,21 @@ func (d *DBs) acquire(ctx context.Context, id string, create bool) (db *sql.DB, 
 		return e.db, d.releaseFunc(e), nil
 	}
 
-	e = &entry{id: id, ready: make(chan struct{})}
+	e = &entry{id: id, ready: make(chan struct{}), cold: mode == modeMigrate}
 	d.entries[id] = e
 	d.use(e)
-	evicted := d.evict()
+	var evicted []*sql.DB
+	if !e.cold {
+		// A cold database is closed again straight after, so it goes
+		// over MaxOpen briefly instead of closing one that's in use.
+		evicted = d.evict()
+	}
 	d.mu.Unlock()
 	closeAll(evicted)
 
 	// Delete can't remove the file between this check and the open: it
 	// waits for e's users, which include us.
-	if _, err := os.Stat(path); !create && errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Stat(path); mode == modeUse && errors.Is(err, fs.ErrNotExist) {
 		e.err = ErrNotExist
 	} else {
 		// Detach from ctx so a cancelled request can't leave a
@@ -280,7 +316,7 @@ func (d *DBs) releaseFunc(e *entry) func() {
 }
 
 // release drops a user of e. When the last goes, e becomes idle and any
-// databases over MaxOpen are closed.
+// databases over MaxOpen are closed, or if e is cold, it's closed.
 func (d *DBs) release(e *entry) {
 	d.mu.Lock()
 	e.users--
@@ -295,6 +331,9 @@ func (d *DBs) release(e *entry) {
 		close(e.unused)
 	case d.entries[e.id] != e:
 		// Failed to open, or closed: nothing to track.
+	case e.cold:
+		delete(d.entries, e.id)
+		evicted = []*sql.DB{e.db}
 	default:
 		e.lastUsed = time.Now()
 		e.elem = d.idle.PushFront(e)
