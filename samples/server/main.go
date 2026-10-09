@@ -11,6 +11,8 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -21,7 +23,7 @@ import (
 
 	"github.com/riverqueue/river"
 
-	"github.com/timwmillard/golite/api"
+	"github.com/timwmillard/golite/conv"
 	"github.com/timwmillard/golite/samples/server/migrations"
 	"github.com/timwmillard/golite/server"
 )
@@ -107,7 +109,7 @@ func (h *handlers) listGreetings(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.QueryContext(r.Context(),
 		`select id, name, message, created_at from greetings order by id desc limit 100`)
 	if err != nil {
-		api.InternalError(w, r, "List greetings", err)
+		server.ResponseError(w, r, fmt.Errorf("list greetings: %w", err))
 		return
 	}
 	defer rows.Close()
@@ -120,37 +122,43 @@ func (h *handlers) listGreetings(w http.ResponseWriter, r *http.Request) {
 			createdAt int64
 		)
 		if err := rows.Scan(&id, &g.Name, &g.Message, &createdAt); err != nil {
-			api.InternalError(w, r, "Scan greeting", err)
+			server.ResponseError(w, r, fmt.Errorf("scan greeting: %w", err))
 			return
 		}
-		g.ID = api.FormatID(id)
-		g.CreatedAt = time.Unix(createdAt, 0).UTC()
+		g.ID = conv.FormatID(id)
+		g.CreatedAt = conv.Unix(createdAt)
 		out = append(out, g)
 	}
 	if err := rows.Err(); err != nil {
-		api.InternalError(w, r, "List greetings", err)
+		server.ResponseError(w, r, fmt.Errorf("list greetings: %w", err))
 		return
 	}
 
-	api.WriteJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *handlers) createGreeting(w http.ResponseWriter, r *http.Request) {
 	var req GreetArgs
-	if err := api.DecodeJSON(r, &req); err != nil {
-		api.WriteError(w, http.StatusBadRequest, "invalid JSON body")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		server.RequestError(w, r, errors.New("invalid JSON body"))
 		return
 	}
 	if req.Name == "" {
-		api.WriteError(w, http.StatusBadRequest, "name is required")
+		server.RequestError(w, r, errors.New("name is required"))
 		return
 	}
 
 	res, err := h.river.Insert(r.Context(), req, nil)
 	if err != nil {
-		api.InternalError(w, r, "Enqueue greet job", err)
+		server.ResponseError(w, r, fmt.Errorf("enqueue greet job: %w", err))
 		return
 	}
 
-	api.WriteJSON(w, http.StatusAccepted, map[string]string{"job_id": api.FormatID(res.Job.ID)})
+	writeJSON(w, http.StatusAccepted, map[string]string{"job_id": conv.FormatID(res.Job.ID)})
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }

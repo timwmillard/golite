@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	golite "github.com/timwmillard/golite/api"
+	"github.com/timwmillard/golite/conv"
 
 	"github.com/timwmillard/golite/samples/todo/db/model"
 )
@@ -31,7 +31,7 @@ func (h *TaskHandler) ListTasks(ctx context.Context, request ListTasksRequestObj
 		err   error
 	)
 	if done := request.Params.Done; done != nil {
-		tasks, err = h.q.ListTasksByDone(ctx, boolInt(*done))
+		tasks, err = h.q.ListTasksByDone(ctx, conv.BoolInt(*done))
 	} else {
 		tasks, err = h.q.ListTasks(ctx)
 	}
@@ -55,7 +55,7 @@ func (h *TaskHandler) CreateTask(ctx context.Context, request CreateTaskRequestO
 
 	task, err := h.q.CreateTask(ctx, model.CreateTaskParams{
 		Title:     title,
-		Notes:     golite.StringPtrToNull(body.Notes),
+		Notes:     conv.NullString(body.Notes),
 		CreatedAt: time.Now().Unix(),
 	})
 	if err != nil {
@@ -66,7 +66,7 @@ func (h *TaskHandler) CreateTask(ctx context.Context, request CreateTaskRequestO
 }
 
 func (h *TaskHandler) GetTask(ctx context.Context, request GetTaskRequestObject) (GetTaskResponseObject, error) {
-	id, err := golite.ParseID(request.ID)
+	id, err := conv.ParseID(request.ID)
 	if err != nil {
 		return GetTask404JSONResponse{notFound}, nil
 	}
@@ -83,7 +83,7 @@ func (h *TaskHandler) GetTask(ctx context.Context, request GetTaskRequestObject)
 }
 
 func (h *TaskHandler) UpdateTask(ctx context.Context, request UpdateTaskRequestObject) (UpdateTaskResponseObject, error) {
-	id, err := golite.ParseID(request.ID)
+	id, err := conv.ParseID(request.ID)
 	if err != nil {
 		return UpdateTask404JSONResponse{notFound}, nil
 	}
@@ -122,11 +122,12 @@ func (h *TaskHandler) UpdateTask(ctx context.Context, request UpdateTaskRequestO
 	if body.Notes != nil {
 		params.Notes = sql.NullString{String: *body.Notes, Valid: *body.Notes != ""}
 	}
-	if body.Done != nil && boolInt(*body.Done) != task.Done {
-		params.Done = boolInt(*body.Done)
+	if body.Done != nil && conv.BoolInt(*body.Done) != task.Done {
+		params.Done = conv.BoolInt(*body.Done)
 		params.CompletedAt = sql.NullInt64{}
 		if *body.Done {
-			params.CompletedAt = sql.NullInt64{Int64: time.Now().Unix(), Valid: true}
+			now := time.Now()
+			params.CompletedAt = conv.NullUnix(&now)
 		}
 	}
 
@@ -142,7 +143,7 @@ func (h *TaskHandler) UpdateTask(ctx context.Context, request UpdateTaskRequestO
 }
 
 func (h *TaskHandler) DeleteTask(ctx context.Context, request DeleteTaskRequestObject) (DeleteTaskResponseObject, error) {
-	id, err := golite.ParseID(request.ID)
+	id, err := conv.ParseID(request.ID)
 	if err != nil {
 		return DeleteTask404JSONResponse{notFound}, nil
 	}

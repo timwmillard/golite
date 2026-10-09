@@ -2,29 +2,25 @@ package api
 
 import (
 	"database/sql"
+	"encoding/json"
 	"net/http"
 
-	golite "github.com/timwmillard/golite/api"
+	"github.com/timwmillard/golite/server"
 )
 
 // Register mounts the API's routes, plus the spec at GET /openapi.json, on
 // mux.
 func Register(mux *http.ServeMux, db *sql.DB) {
+	// The generated default error handlers write err.Error() as
+	// text/plain, which for response errors leaks database details to the
+	// client; golite's send JSON and log the real error instead.
 	h := NewStrictHandlerWithOptions(NewTaskHandler(db), nil, StrictHTTPServerOptions{
-		// The generated defaults write err.Error() as text/plain, which
-		// for response errors leaks database details to the client.
-		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			golite.WriteError(w, http.StatusBadRequest, err.Error())
-		},
-		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			golite.InternalError(w, r, "API request failed", err)
-		},
+		RequestErrorHandlerFunc:  server.RequestError,
+		ResponseErrorHandlerFunc: server.ResponseError,
 	})
 	HandlerWithOptions(h, StdHTTPServerOptions{
-		BaseRouter: mux,
-		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			golite.WriteError(w, http.StatusBadRequest, err.Error())
-		},
+		BaseRouter:       mux,
+		ErrorHandlerFunc: server.RequestError,
 	})
 
 	mux.HandleFunc("GET /openapi.json", serveSpec)
@@ -33,8 +29,9 @@ func Register(mux *http.ServeMux, db *sql.DB) {
 func serveSpec(w http.ResponseWriter, r *http.Request) {
 	spec, err := GetSwagger()
 	if err != nil {
-		golite.InternalError(w, r, "Load OpenAPI spec", err)
+		server.ResponseError(w, r, err)
 		return
 	}
-	golite.WriteJSON(w, http.StatusOK, spec)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(spec)
 }

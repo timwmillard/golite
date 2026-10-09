@@ -5,8 +5,8 @@ Utility packages for my default Go + SQLite setup.
 | Package | |
 |---|---|
 | `migrate` | Forward-only `NNNN_name.sql` migrations from an `fs.FS`, plus optional `pragmas.sql` |
-| `server` | HTTP server with graceful shutdown, config from `.env` / env vars / flags, `GET /health`, optional River job queue and RiverUI, plus `OpenDB` to open and migrate the SQLite database |
-| `api` | JSON responses/errors (including logged 500s), request decoding, string IDs, and `sql.Null*` ↔ pointer conversions |
+| `server` | HTTP server with graceful shutdown, config from `.env` / env vars / flags, `GET /health`, optional River job queue and RiverUI, `OpenDB` to open and migrate the SQLite database, and `RequestError` / `ResponseError` JSON error handlers for oapi-codegen's strict server |
+| `conv` | Converts sqlc values for the API: int64 ↔ string IDs, `sql.Null*` ↔ pointers, 0/1 ↔ bool, unix seconds ↔ `time.Time` |
 | `colorlog` | Colored `slog.Handler`, plus `cmd/colorlog` to pretty-print JSON logs |
 
 ```go
@@ -24,7 +24,7 @@ river.AddWorker(workers, &worker.Hello{})
 cfg.DB, cfg.Workers = db, workers
 
 srv, err := server.New(ctx, cfg)
-srv.Mux.Handle("/api/", api.NewRouter(db, srv.River))
+api.Register(srv.Mux, db) // the app's oapi-codegen package; see samples/todo
 err = srv.Run(ctx) // blocks until SIGINT/SIGTERM
 ```
 
