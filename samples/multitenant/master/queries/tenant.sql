@@ -28,3 +28,8 @@ returning *;
 delete from tenant
 where slug = ?
 returning *;
+
+-- name: ListTenantIDs :many
+select id
+from tenant
+order by id;

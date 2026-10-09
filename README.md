@@ -6,7 +6,7 @@ Utility packages for my default Go + SQLite setup.
 |---|---|
 | `migrate` | Forward-only `NNNN_name.sql` migrations from an `fs.FS`, plus optional `pragmas.sql` |
 | `server` | HTTP server with graceful shutdown, config from `.env` / env vars / flags, `GET /health`, optional River job queue and RiverUI, `OpenDB` to open and migrate the SQLite database, `RequestError` / `ResponseError` JSON error handlers for oapi-codegen's strict server, and `WriteError` for the same `{"error": ...}` body elsewhere |
-| `tenant` | One SQLite database per tenant for apps with thousands of them: opened and migrated on use, closed least-recently-used past a cap or when idle (never while in use), plus middleware that puts the request's tenant database in its context |
+| `tenant` | One SQLite database per tenant for apps with thousands of them: opened and migrated on use, closed least-recently-used past a cap or when idle (never while in use), `MigrateAll` for deploys, plus middleware that puts the request's tenant database in its context |
 | `conv` | Converts sqlc values for the API: int64 ↔ string IDs, `sql.Null*` ↔ pointers, 0/1 ↔ bool, unix seconds ↔ `time.Time` |
 | `colorlog` | Colored `slog.Handler`, plus `cmd/colorlog` to pretty-print JSON logs |
 

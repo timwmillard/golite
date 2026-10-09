@@ -87,6 +87,35 @@ func (q *Queries) GetTenantBySlug(ctx context.Context, slug string) (Tenant, err
 	return i, err
 }
 
+const listTenantIDs = `-- name: ListTenantIDs :many
+select id
+from tenant
+order by id
+`
+
+func (q *Queries) ListTenantIDs(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listTenantIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTenants = `-- name: ListTenants :many
 select id, slug, name, created_at
 from tenant

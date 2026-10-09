@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
@@ -175,6 +176,56 @@ func TestCreate_Idempotent(t *testing.T) {
 	d.Do(t.Context(), "acme", func(db *sql.DB) error { return db.QueryRow(`select count(*) from things`).Scan(&n) })
 	if n != 1 {
 		t.Errorf("%d rows after re-Create, want 1", n)
+	}
+}
+
+func TestMigrateAll(t *testing.T) {
+	fsys := fstest.MapFS{"0001_init.sql": testMigrations["0001_init.sql"]}
+	d := newDBs(t, Config{Migrations: fsys, MaxOpen: 2})
+
+	ids := []string{"a", "b", "c"}
+	for _, id := range ids[:2] {
+		if err := d.Create(t.Context(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d.closeIdle(time.Now())
+
+	// A new migration ships; "c" has no database yet.
+	fsys["0002_more.sql"] = &fstest.MapFile{Data: []byte(`create table more (id integer primary key)`)}
+	if err := d.MigrateAll(t.Context(), ids); err != nil {
+		t.Fatalf("MigrateAll: %v", err)
+	}
+	if s := d.Stats(); s.Open > 2 || s.InUse != 0 {
+		t.Errorf("Stats = %+v, want <= 2 open (MaxOpen), 0 in use", s)
+	}
+	for _, id := range ids {
+		err := d.Do(t.Context(), id, func(db *sql.DB) error {
+			_, err := db.Exec(`insert into more default values`)
+			return err
+		})
+		if err != nil {
+			t.Errorf("tenant %s not migrated: %v", id, err)
+		}
+	}
+}
+
+func TestMigrateAll_ContinuesPastFailures(t *testing.T) {
+	d := newDBs(t, Config{})
+
+	err := d.MigrateAll(t.Context(), []string{"bad/id", "ok", "also/bad"})
+	if err == nil {
+		t.Fatal("MigrateAll with invalid ids succeeded")
+	}
+	for _, want := range []string{"bad/id", "also/bad"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q doesn't mention %s", err, want)
+		}
+	}
+	if _, release, err := d.Acquire(t.Context(), "ok"); err != nil {
+		t.Errorf("valid tenant after a failed one not migrated: %v", err)
+	} else {
+		release()
 	}
 }
 

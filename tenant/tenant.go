@@ -169,6 +169,25 @@ func (d *DBs) Create(ctx context.Context, id string) error {
 	return nil
 }
 
+// MigrateAll applies pending migrations to each tenant in ids, creating any
+// database that doesn't exist yet, one tenant at a time so it stays within
+// MaxOpen. Run it after a deploy so tenants that aren't being used still get
+// new migrations; otherwise they only get them when next opened. It keeps
+// going past a tenant that fails, and returns all the failures; it stops
+// early only if ctx is done.
+func (d *DBs) MigrateAll(ctx context.Context, ids []string) error {
+	var errs []error
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(append(errs, err)...)
+		}
+		if err := d.Create(ctx, id); err != nil {
+			errs = append(errs, fmt.Errorf("tenant %s: %w", id, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func (d *DBs) acquire(ctx context.Context, id string, create bool) (db *sql.DB, release func(), err error) {
 	path, err := d.Path(id)
 	if err != nil {

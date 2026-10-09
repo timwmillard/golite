@@ -13,11 +13,18 @@
 //	curl -X PATCH localhost:7880/v1/tenants/acme -d '{"name":"Acme Inc"}'
 //	curl -X DELETE localhost:7880/v1/tenants/acme
 //	open localhost:7880/riverui/
+//
+// After a deploy that adds tenant migrations, bring every tenant's database
+// up to date (otherwise each is migrated when next used):
+//
+//	go run ./cmd/multitenantserver -migrate-tenants
 package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -25,11 +32,13 @@ import (
 
 	"github.com/riverqueue/river"
 
+	"github.com/timwmillard/golite/conv"
 	"github.com/timwmillard/golite/server"
 	"github.com/timwmillard/golite/tenant"
 
 	"github.com/timwmillard/golite/samples/multitenant/api"
 	mastermigrations "github.com/timwmillard/golite/samples/multitenant/master/migrations"
+	mastermodel "github.com/timwmillard/golite/samples/multitenant/master/model"
 	tenantmigrations "github.com/timwmillard/golite/samples/multitenant/tenantdb/migrations"
 	"github.com/timwmillard/golite/samples/multitenant/tenantsync"
 )
@@ -46,6 +55,7 @@ func run(ctx context.Context) error {
 	dataDir := flag.String("data", "data", "data directory") // also settable as $DATA
 	maxOpen := flag.Int("max-open-tenants", 256, "tenant databases to keep open")
 	idleTimeout := flag.Duration("tenant-idle-timeout", 10*time.Minute, "close a tenant database after this long unused")
+	migrateTenants := flag.Bool("migrate-tenants", false, "migrate every tenant's database, then exit")
 	if err := cfg.Parse(); err != nil {
 		return err
 	}
@@ -66,6 +76,10 @@ func run(ctx context.Context) error {
 	})
 	defer dbs.Close()
 
+	if *migrateTenants {
+		return migrateAll(ctx, master, dbs)
+	}
+
 	workers := river.NewWorkers()
 	tenantsync.AddWorkers(workers, master, dbs)
 	cfg.DB, cfg.Workers = master, workers // River runs on master; GET /health pings it
@@ -77,4 +91,20 @@ func run(ctx context.Context) error {
 	api.Register(srv.Mux, master, dbs, srv.River)
 
 	return srv.Run(ctx) // blocks until SIGINT/SIGTERM
+}
+
+// migrateAll applies pending migrations to every tenant in master.
+func migrateAll(ctx context.Context, master *sql.DB, dbs *tenant.DBs) error {
+	ids, err := mastermodel.New(master).ListTenantIDs(ctx)
+	if err != nil {
+		return fmt.Errorf("list tenants: %w", err)
+	}
+
+	slog.Info("Migrating tenants", "count", len(ids))
+	err = dbs.MigrateAll(ctx, conv.FormatIDs(ids))
+	if err != nil {
+		return err
+	}
+	slog.Info("Migrated tenants", "count", len(ids))
+	return nil
 }
