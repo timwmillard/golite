@@ -1,0 +1,184 @@
+openapi: 3.0.3
+
+info:
+  title: Todo API
+  description: Example golite API backed by SQLite.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:7880
+    description: Local dev server
+
+paths:
+
+  /v1/tasks:
+    get:
+      operationId: listTasks
+      summary: List tasks
+      tags:
+        - Tasks
+      parameters:
+        - name: done
+          in: query
+          required: false
+          description: Only return tasks that are (or aren't) done.
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Tasks found
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+    post:
+      operationId: createTask
+      summary: Create a task
+      tags:
+        - Tasks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: Task created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /v1/tasks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+    get:
+      operationId: getTask
+      summary: Get a task
+      tags:
+        - Tasks
+      responses:
+        '200':
+          description: Task found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updateTask
+      summary: Update a task
+      description: Only the fields given are changed.
+      tags:
+        - Tasks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskRequest'
+      responses:
+        '200':
+          description: Task updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteTask
+      summary: Delete a task
+      tags:
+        - Tasks
+      responses:
+        '204':
+          description: Task deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+
+  parameters:
+    TaskID:
+      name: id
+      in: path
+      required: true
+      description: Task ID. IDs are strings on the wire.
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Task:
+      type: object
+      required: [id, title, notes, done, created_at, completed_at]
+      properties:
+        id:
+          type: string
+          example: "1"
+        title:
+          type: string
+          example: Buy milk
+        notes:
+          type: string
+          nullable: true
+        done:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateTaskRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          minLength: 1
+        notes:
+          type: string
+
+    UpdateTaskRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+        notes:
+          type: string
+          description: An empty string clears the notes.
+        done:
+          type: boolean
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

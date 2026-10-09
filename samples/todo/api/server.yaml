@@ -1,0 +1,12 @@
+package: api
+output: api/server.gen.go
+output-options:
+  skip-prune: true
+  name-normalizer: ToCamelCaseWithInitialisms
+generate:
+  models: true
+  embedded-spec: true
+  std-http-server: true
+  strict-server: true
+compatibility:
+  always-prefix-enum-values: true
