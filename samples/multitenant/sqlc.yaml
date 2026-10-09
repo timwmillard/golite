@@ -1,0 +1,18 @@
+version: 2
+sql:
+
+- schema: master/migrations
+  queries: master/queries
+  engine: sqlite
+  gen:
+    go:
+      package: model
+      out: master/model
+
+- schema: tenantdb/migrations
+  queries: tenantdb/queries
+  engine: sqlite
+  gen:
+    go:
+      package: model
+      out: tenantdb/model

@@ -1,0 +1,334 @@
+openapi: 3.0.3
+
+info:
+  title: Multi-tenant Todo API
+  description: |
+    Example golite API where each tenant has its own SQLite database. The
+    master database lists the tenants; /v1/tenants/{tenant}/... routes run
+    against that tenant's database.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:7880
+    description: Local dev server
+
+paths:
+
+  /v1/tenants:
+    get:
+      operationId: listTenants
+      summary: List tenants
+      tags:
+        - Tenants
+      responses:
+        '200':
+          description: Tenants found
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tenant'
+    post:
+      operationId: createTenant
+      summary: Create a tenant
+      description: Creates the tenant in the master database, and its own database.
+      tags:
+        - Tenants
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTenantRequest'
+      responses:
+        '201':
+          description: Tenant created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /v1/tenants/{tenant}:
+    parameters:
+      - $ref: '#/components/parameters/TenantSlug'
+    get:
+      operationId: getTenant
+      summary: Get a tenant
+      tags:
+        - Tenants
+      responses:
+        '200':
+          description: Tenant found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updateTenant
+      summary: Update a tenant
+      description: The change reaches the tenant's own database shortly after, by a background job.
+      tags:
+        - Tenants
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTenantRequest'
+      responses:
+        '200':
+          description: Tenant updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteTenant
+      summary: Delete a tenant
+      description: |
+        Deletes the tenant. Its database, with all its data, is removed by a
+        background job once in-flight requests on it finish.
+      tags:
+        - Tenants
+      responses:
+        '204':
+          description: Tenant deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/tenants/{tenant}/tasks:
+    parameters:
+      - $ref: '#/components/parameters/TenantSlug'
+    get:
+      operationId: listTasks
+      summary: List tasks
+      tags:
+        - Tasks
+      parameters:
+        - name: done
+          in: query
+          required: false
+          description: Only return tasks that are (or aren't) done.
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Tasks found
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: createTask
+      summary: Create a task
+      tags:
+        - Tasks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: Task created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/tenants/{tenant}/tasks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TenantSlug'
+      - $ref: '#/components/parameters/TaskID'
+    get:
+      operationId: getTask
+      summary: Get a task
+      tags:
+        - Tasks
+      responses:
+        '200':
+          description: Task found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updateTask
+      summary: Update a task
+      description: Only the fields given are changed.
+      tags:
+        - Tasks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskRequest'
+      responses:
+        '200':
+          description: Task updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteTask
+      summary: Delete a task
+      tags:
+        - Tasks
+      responses:
+        '204':
+          description: Task deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+
+  parameters:
+    TenantSlug:
+      name: tenant
+      in: path
+      required: true
+      description: The tenant's slug.
+      schema:
+        type: string
+    TaskID:
+      name: id
+      in: path
+      required: true
+      description: Task ID. IDs are strings on the wire.
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Not found (including an unknown tenant)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Tenant:
+      type: object
+      required: [slug, name, created_at]
+      properties:
+        slug:
+          type: string
+          example: acme
+        name:
+          type: string
+          example: Acme Corp
+        created_at:
+          type: string
+          format: date-time
+
+    CreateTenantRequest:
+      type: object
+      required: [slug, name]
+      properties:
+        slug:
+          type: string
+          description: URL-safe key used in /v1/tenants/{tenant}. Lowercase letters, digits and '-'.
+          pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
+        name:
+          type: string
+          minLength: 1
+
+    UpdateTenantRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+
+    Task:
+      type: object
+      required: [id, title, notes, done, created_at, completed_at]
+      properties:
+        id:
+          type: string
+          example: "1"
+        title:
+          type: string
+          example: Buy milk
+        notes:
+          type: string
+          nullable: true
+        done:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateTaskRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          minLength: 1
+        notes:
+          type: string
+
+    UpdateTaskRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+        notes:
+          type: string
+          description: An empty string clears the notes.
+        done:
+          type: boolean
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

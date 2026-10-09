@@ -11,7 +11,7 @@ import (
 // ErrorHandlerFunc (bad path or query parameter), where err describes what
 // the client sent wrong.
 func RequestError(w http.ResponseWriter, r *http.Request, err error) {
-	writeJSONError(w, http.StatusBadRequest, err.Error())
+	WriteError(w, http.StatusBadRequest, err.Error())
 }
 
 // ResponseError logs err via slog's default logger, with the request's
@@ -21,10 +21,13 @@ func RequestError(w http.ResponseWriter, r *http.Request, err error) {
 // the generated default sends that error's text to the client.
 func ResponseError(w http.ResponseWriter, r *http.Request, err error) {
 	slog.ErrorContext(r.Context(), "Request failed", "err", err, "method", r.Method, "path", r.URL.Path)
-	writeJSONError(w, http.StatusInternalServerError, "internal error")
+	WriteError(w, http.StatusInternalServerError, "internal error")
 }
 
-func writeJSONError(w http.ResponseWriter, status int, message string) {
+// WriteError writes status with {"error": message}, the body RequestError
+// and ResponseError send, for handlers outside oapi-codegen that want the
+// same shape.
+func WriteError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
