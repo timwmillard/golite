@@ -1,6 +1,6 @@
 // Package todo is an example golite app with an OpenAPI spec (oapi-codegen
 // strict server) and sqlc queries. Run `go generate` after editing
-// api/spec.yaml or db/queries.
+// api/spec.yaml or queries/.
 package todo
 
 // Generate Models

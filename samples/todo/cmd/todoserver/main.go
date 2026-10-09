@@ -1,7 +1,7 @@
 // Command todoserver serves the todo API: an OpenAPI spec (api/spec.yaml,
 // served by oapi-codegen's strict server) over sqlc queries on SQLite.
 //
-//	go generate ./...   # after editing api/spec.yaml or db/queries
+//	go generate ./...   # after editing api/spec.yaml or queries/
 //	go run ./cmd/todoserver
 //	curl -X POST localhost:7880/v1/tasks -d '{"title":"Buy milk"}'
 //	curl localhost:7880/v1/tasks
@@ -18,7 +18,7 @@ import (
 	"github.com/timwmillard/golite/server"
 
 	"github.com/timwmillard/golite/samples/todo/api"
-	"github.com/timwmillard/golite/samples/todo/db/migrations"
+	"github.com/timwmillard/golite/samples/todo/migrations"
 )
 
 func main() {

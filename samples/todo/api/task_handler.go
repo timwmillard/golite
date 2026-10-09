@@ -10,7 +10,7 @@ import (
 
 	"github.com/timwmillard/golite/conv"
 
-	"github.com/timwmillard/golite/samples/todo/db/model"
+	"github.com/timwmillard/golite/samples/todo/model"
 )
 
 // TaskHandler implements StrictServerInterface. The generated code decodes

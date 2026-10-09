@@ -3,7 +3,7 @@ package api
 import (
 	"github.com/timwmillard/golite/conv"
 
-	"github.com/timwmillard/golite/samples/todo/db/model"
+	"github.com/timwmillard/golite/samples/todo/model"
 )
 
 func toAPITask(t model.Task) Task {
