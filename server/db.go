@@ -1,6 +1,4 @@
-// Package sqlite opens a SQLite database the way the other golite packages
-// expect it: one connection, schema migrated.
-package sqlite
+package server
 
 import (
 	"context"
@@ -15,13 +13,13 @@ import (
 	"github.com/timwmillard/golite/migrate"
 )
 
-// Open opens the SQLite database at path, creating it and its directory if
+// OpenDB opens the SQLite database at path, creating it and its directory if
 // needed, and applies the migrations in fsys (see package migrate). fsys may
 // be nil to skip migrations.
 //
 // The pool is limited to one connection: SQLite allows a single writer, and
 // sharing one connection between the app and River avoids SQLITE_BUSY.
-func Open(ctx context.Context, path string, fsys fs.FS) (*sql.DB, error) {
+func OpenDB(ctx context.Context, path string, fsys fs.FS) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create database dir: %w", err)
 	}

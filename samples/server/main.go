@@ -24,7 +24,6 @@ import (
 	"github.com/timwmillard/golite/api"
 	"github.com/timwmillard/golite/samples/server/migrations"
 	"github.com/timwmillard/golite/server"
-	"github.com/timwmillard/golite/sqlite"
 )
 
 func main() {
@@ -43,7 +42,7 @@ func run(ctx context.Context) error {
 	}
 	log := cfg.Logger
 
-	db, err := sqlite.Open(ctx, filepath.Join(*dataDir, "app.db"), migrations.FS)
+	db, err := server.OpenDB(ctx, filepath.Join(*dataDir, "app.db"), migrations.FS)
 	if err != nil {
 		return err
 	}

@@ -1,4 +1,4 @@
-package sqlite
+package server
 
 import (
 	"path/filepath"
@@ -6,15 +6,15 @@ import (
 	"testing/fstest"
 )
 
-func TestOpen_CreatesDirAndMigrates(t *testing.T) {
+func TestOpenDB_CreatesDirAndMigrates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "dir", "app.db")
 	fsys := fstest.MapFS{
 		"0001_init.sql": {Data: []byte(`create table things (id integer primary key)`)},
 	}
 
-	db, err := Open(t.Context(), path, fsys)
+	db, err := OpenDB(t.Context(), path, fsys)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("OpenDB: %v", err)
 	}
 	defer db.Close()
 
@@ -26,19 +26,19 @@ func TestOpen_CreatesDirAndMigrates(t *testing.T) {
 	}
 }
 
-func TestOpen_NilMigrations(t *testing.T) {
-	db, err := Open(t.Context(), filepath.Join(t.TempDir(), "app.db"), nil)
+func TestOpenDB_NilMigrations(t *testing.T) {
+	db, err := OpenDB(t.Context(), filepath.Join(t.TempDir(), "app.db"), nil)
 	if err != nil {
-		t.Fatalf("Open: %v", err)
+		t.Fatalf("OpenDB: %v", err)
 	}
 	db.Close()
 }
 
-func TestOpen_BadMigration(t *testing.T) {
+func TestOpenDB_BadMigration(t *testing.T) {
 	fsys := fstest.MapFS{
 		"0001_bad.sql": {Data: []byte(`not sql`)},
 	}
-	if _, err := Open(t.Context(), filepath.Join(t.TempDir(), "app.db"), fsys); err == nil {
-		t.Fatal("Open: want error for bad migration")
+	if _, err := OpenDB(t.Context(), filepath.Join(t.TempDir(), "app.db"), fsys); err == nil {
+		t.Fatal("OpenDB: want error for bad migration")
 	}
 }
