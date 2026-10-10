@@ -11,15 +11,15 @@ import (
 	"github.com/timwmillard/golite/conv"
 	"github.com/timwmillard/golite/tenant"
 
-	"github.com/timwmillard/golite/samples/multitenant/tenantdb/model"
+	"github.com/timwmillard/golite/samples/multitenant/companydb/model"
 )
 
 // TaskHandler implements the task operations of StrictServerInterface
-// against the tenant database that tenant.Middleware put in the request
+// against the company database that tenant.Middleware put in the request
 // context. It holds no database itself.
 type TaskHandler struct{}
 
-// queries returns the queries for the request's tenant database.
+// queries returns the queries for the request's company database.
 func queries(ctx context.Context) *model.Queries {
 	return model.New(tenant.DB(ctx))
 }

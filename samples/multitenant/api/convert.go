@@ -3,12 +3,12 @@ package api
 import (
 	"github.com/timwmillard/golite/conv"
 
+	"github.com/timwmillard/golite/samples/multitenant/companydb/model"
 	mastermodel "github.com/timwmillard/golite/samples/multitenant/master/model"
-	"github.com/timwmillard/golite/samples/multitenant/tenantdb/model"
 )
 
-func toAPITenant(t mastermodel.Tenant) Tenant {
-	return Tenant{
+func toAPICompany(t mastermodel.Company) Company {
+	return Company{
 		Slug:      t.Slug,
 		Name:      t.Name,
 		CreatedAt: conv.Unix(t.CreatedAt),

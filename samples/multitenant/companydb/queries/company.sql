@@ -1,5 +1,5 @@
--- name: UpsertTenant :exec
-insert into tenant (id, master_id, slug, name, synced_at)
+-- name: UpsertCompany :exec
+insert into company (id, master_id, slug, name, synced_at)
 values (1, ?, ?, ?, ?)
 on conflict (id) do update
 set
@@ -8,7 +8,7 @@ set
     name = excluded.name,
     synced_at = excluded.synced_at;
 
--- name: GetTenant :one
+-- name: GetCompany :one
 select *
-from tenant
+from company
 where id = 1;

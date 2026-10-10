@@ -1,11 +1,11 @@
 openapi: 3.0.3
 
 info:
-  title: Multi-tenant Todo API
+  title: Company Todo API
   description: |
-    Example golite API where each tenant has its own SQLite database. The
-    master database lists the tenants; /v1/tenants/{tenant}/... routes run
-    against that tenant's database.
+    Example golite API where each company has its own SQLite database. The
+    master database lists the companies; /v1/companies/{company}/... routes
+    run against that company's database.
   version: 1.0.0
 
 servers:
@@ -14,102 +14,102 @@ servers:
 
 paths:
 
-  /v1/tenants:
+  /v1/companies:
     get:
-      operationId: listTenants
-      summary: List tenants
+      operationId: listCompanies
+      summary: List companies
       tags:
-        - Tenants
+        - Companies
       responses:
         '200':
-          description: Tenants found
+          description: Companies found
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Tenant'
+                  $ref: '#/components/schemas/Company'
     post:
-      operationId: createTenant
-      summary: Create a tenant
-      description: Creates the tenant in the master database, and its own database.
+      operationId: createCompany
+      summary: Create a company
+      description: Creates the company in the master database, and its own database.
       tags:
-        - Tenants
+        - Companies
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateTenantRequest'
+              $ref: '#/components/schemas/CreateCompanyRequest'
       responses:
         '201':
-          description: Tenant created
+          description: Company created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Tenant'
+                $ref: '#/components/schemas/Company'
         '400':
           $ref: '#/components/responses/BadRequest'
         '409':
           $ref: '#/components/responses/Conflict'
 
-  /v1/tenants/{tenant}:
+  /v1/companies/{company}:
     parameters:
-      - $ref: '#/components/parameters/TenantSlug'
+      - $ref: '#/components/parameters/CompanySlug'
     get:
-      operationId: getTenant
-      summary: Get a tenant
+      operationId: getCompany
+      summary: Get a company
       tags:
-        - Tenants
+        - Companies
       responses:
         '200':
-          description: Tenant found
+          description: Company found
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Tenant'
+                $ref: '#/components/schemas/Company'
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
-      operationId: updateTenant
-      summary: Update a tenant
-      description: The change reaches the tenant's own database shortly after, by a background job.
+      operationId: updateCompany
+      summary: Update a company
+      description: The change reaches the company's own database shortly after, by a background job.
       tags:
-        - Tenants
+        - Companies
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateTenantRequest'
+              $ref: '#/components/schemas/UpdateCompanyRequest'
       responses:
         '200':
-          description: Tenant updated
+          description: Company updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Tenant'
+                $ref: '#/components/schemas/Company'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
     delete:
-      operationId: deleteTenant
-      summary: Delete a tenant
+      operationId: deleteCompany
+      summary: Delete a company
       description: |
-        Deletes the tenant. Its database, with all its data, is removed by a
+        Deletes the company. Its database, with all its data, is removed by a
         background job once in-flight requests on it finish.
       tags:
-        - Tenants
+        - Companies
       responses:
         '204':
-          description: Tenant deleted
+          description: Company deleted
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /v1/tenants/{tenant}/tasks:
+  /v1/companies/{company}/tasks:
     parameters:
-      - $ref: '#/components/parameters/TenantSlug'
+      - $ref: '#/components/parameters/CompanySlug'
     get:
       operationId: listTasks
       summary: List tasks
@@ -156,9 +156,9 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /v1/tenants/{tenant}/tasks/{id}:
+  /v1/companies/{company}/tasks/{id}:
     parameters:
-      - $ref: '#/components/parameters/TenantSlug'
+      - $ref: '#/components/parameters/CompanySlug'
       - $ref: '#/components/parameters/TaskID'
     get:
       operationId: getTask
@@ -211,11 +211,11 @@ paths:
 components:
 
   parameters:
-    TenantSlug:
-      name: tenant
+    CompanySlug:
+      name: company
       in: path
       required: true
-      description: The tenant's slug.
+      description: The company's slug.
       schema:
         type: string
     TaskID:
@@ -234,7 +234,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     NotFound:
-      description: Not found (including an unknown tenant)
+      description: Not found (including an unknown company)
       content:
         application/json:
           schema:
@@ -247,7 +247,7 @@ components:
             $ref: '#/components/schemas/Error'
 
   schemas:
-    Tenant:
+    Company:
       type: object
       required: [slug, name, created_at]
       properties:
@@ -261,19 +261,19 @@ components:
           type: string
           format: date-time
 
-    CreateTenantRequest:
+    CreateCompanyRequest:
       type: object
       required: [slug, name]
       properties:
         slug:
           type: string
-          description: URL-safe key used in /v1/tenants/{tenant}. Lowercase letters, digits and '-'.
+          description: URL-safe key used in /v1/companies/{company}. Lowercase letters, digits and '-'.
           pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
         name:
           type: string
           minLength: 1
 
-    UpdateTenantRequest:
+    UpdateCompanyRequest:
       type: object
       required: [name]
       properties:

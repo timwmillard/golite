@@ -23,18 +23,29 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Company defines model for Company.
+type Company struct {
+	CreatedAt time.Time `json:"created_at"`
+
+	// Name Example: Acme Corp
+	Name string `json:"name"`
+
+	// Slug Example: acme
+	Slug string `json:"slug"`
+}
+
+// CreateCompanyRequest defines model for CreateCompanyRequest.
+type CreateCompanyRequest struct {
+	Name string `json:"name"`
+
+	// Slug URL-safe key used in /v1/companies/{company}. Lowercase letters, digits and '-'.
+	Slug string `json:"slug"`
+}
+
 // CreateTaskRequest defines model for CreateTaskRequest.
 type CreateTaskRequest struct {
 	Notes *string `json:"notes,omitempty"`
 	Title string  `json:"title"`
-}
-
-// CreateTenantRequest defines model for CreateTenantRequest.
-type CreateTenantRequest struct {
-	Name string `json:"name"`
-
-	// Slug URL-safe key used in /v1/tenants/{tenant}. Lowercase letters, digits and '-'.
-	Slug string `json:"slug"`
 }
 
 // Error defines model for Error.
@@ -56,15 +67,9 @@ type Task struct {
 	Title string `json:"title"`
 }
 
-// Tenant defines model for Tenant.
-type Tenant struct {
-	CreatedAt time.Time `json:"created_at"`
-
-	// Name Example: Acme Corp
+// UpdateCompanyRequest defines model for UpdateCompanyRequest.
+type UpdateCompanyRequest struct {
 	Name string `json:"name"`
-
-	// Slug Example: acme
-	Slug string `json:"slug"`
 }
 
 // UpdateTaskRequest defines model for UpdateTaskRequest.
@@ -76,16 +81,11 @@ type UpdateTaskRequest struct {
 	Title *string `json:"title,omitempty"`
 }
 
-// UpdateTenantRequest defines model for UpdateTenantRequest.
-type UpdateTenantRequest struct {
-	Name string `json:"name"`
-}
+// CompanySlug defines model for CompanySlug.
+type CompanySlug = string
 
 // TaskID defines model for TaskID.
 type TaskID = string
-
-// TenantSlug defines model for TenantSlug.
-type TenantSlug = string
 
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
@@ -102,11 +102,11 @@ type ListTasksParams struct {
 	Done *bool `form:"done,omitempty" json:"done,omitempty"`
 }
 
-// CreateTenantJSONRequestBody defines body for CreateTenant for application/json ContentType.
-type CreateTenantJSONRequestBody = CreateTenantRequest
+// CreateCompanyJSONRequestBody defines body for CreateCompany for application/json ContentType.
+type CreateCompanyJSONRequestBody = CreateCompanyRequest
 
-// UpdateTenantJSONRequestBody defines body for UpdateTenant for application/json ContentType.
-type UpdateTenantJSONRequestBody = UpdateTenantRequest
+// UpdateCompanyJSONRequestBody defines body for UpdateCompany for application/json ContentType.
+type UpdateCompanyJSONRequestBody = UpdateCompanyRequest
 
 // CreateTaskJSONRequestBody defines body for CreateTask for application/json ContentType.
 type CreateTaskJSONRequestBody = CreateTaskRequest
@@ -116,36 +116,36 @@ type UpdateTaskJSONRequestBody = UpdateTaskRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// ListTenants List tenants
-	// (GET /v1/tenants)
-	ListTenants(w http.ResponseWriter, r *http.Request)
-	// CreateTenant Create a tenant
-	// (POST /v1/tenants)
-	CreateTenant(w http.ResponseWriter, r *http.Request)
-	// DeleteTenant Delete a tenant
-	// (DELETE /v1/tenants/{tenant})
-	DeleteTenant(w http.ResponseWriter, r *http.Request, tenant TenantSlug)
-	// GetTenant Get a tenant
-	// (GET /v1/tenants/{tenant})
-	GetTenant(w http.ResponseWriter, r *http.Request, tenant TenantSlug)
-	// UpdateTenant Update a tenant
-	// (PATCH /v1/tenants/{tenant})
-	UpdateTenant(w http.ResponseWriter, r *http.Request, tenant TenantSlug)
+	// ListCompanies List companies
+	// (GET /v1/companies)
+	ListCompanies(w http.ResponseWriter, r *http.Request)
+	// CreateCompany Create a company
+	// (POST /v1/companies)
+	CreateCompany(w http.ResponseWriter, r *http.Request)
+	// DeleteCompany Delete a company
+	// (DELETE /v1/companies/{company})
+	DeleteCompany(w http.ResponseWriter, r *http.Request, company CompanySlug)
+	// GetCompany Get a company
+	// (GET /v1/companies/{company})
+	GetCompany(w http.ResponseWriter, r *http.Request, company CompanySlug)
+	// UpdateCompany Update a company
+	// (PATCH /v1/companies/{company})
+	UpdateCompany(w http.ResponseWriter, r *http.Request, company CompanySlug)
 	// ListTasks List tasks
-	// (GET /v1/tenants/{tenant}/tasks)
-	ListTasks(w http.ResponseWriter, r *http.Request, tenant TenantSlug, params ListTasksParams)
+	// (GET /v1/companies/{company}/tasks)
+	ListTasks(w http.ResponseWriter, r *http.Request, company CompanySlug, params ListTasksParams)
 	// CreateTask Create a task
-	// (POST /v1/tenants/{tenant}/tasks)
-	CreateTask(w http.ResponseWriter, r *http.Request, tenant TenantSlug)
+	// (POST /v1/companies/{company}/tasks)
+	CreateTask(w http.ResponseWriter, r *http.Request, company CompanySlug)
 	// DeleteTask Delete a task
-	// (DELETE /v1/tenants/{tenant}/tasks/{id})
-	DeleteTask(w http.ResponseWriter, r *http.Request, tenant TenantSlug, id TaskID)
+	// (DELETE /v1/companies/{company}/tasks/{id})
+	DeleteTask(w http.ResponseWriter, r *http.Request, company CompanySlug, id TaskID)
 	// GetTask Get a task
-	// (GET /v1/tenants/{tenant}/tasks/{id})
-	GetTask(w http.ResponseWriter, r *http.Request, tenant TenantSlug, id TaskID)
+	// (GET /v1/companies/{company}/tasks/{id})
+	GetTask(w http.ResponseWriter, r *http.Request, company CompanySlug, id TaskID)
 	// UpdateTask Update a task
-	// (PATCH /v1/tenants/{tenant}/tasks/{id})
-	UpdateTask(w http.ResponseWriter, r *http.Request, tenant TenantSlug, id TaskID)
+	// (PATCH /v1/companies/{company}/tasks/{id})
+	UpdateTask(w http.ResponseWriter, r *http.Request, company CompanySlug, id TaskID)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -157,11 +157,11 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
-// ListTenants operation middleware
-func (siw *ServerInterfaceWrapper) ListTenants(w http.ResponseWriter, r *http.Request) {
+// ListCompanies operation middleware
+func (siw *ServerInterfaceWrapper) ListCompanies(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListTenants(w, r)
+		siw.Handler.ListCompanies(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -171,11 +171,11 @@ func (siw *ServerInterfaceWrapper) ListTenants(w http.ResponseWriter, r *http.Re
 	handler.ServeHTTP(w, r)
 }
 
-// CreateTenant operation middleware
-func (siw *ServerInterfaceWrapper) CreateTenant(w http.ResponseWriter, r *http.Request) {
+// CreateCompany operation middleware
+func (siw *ServerInterfaceWrapper) CreateCompany(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateTenant(w, r)
+		siw.Handler.CreateCompany(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -185,23 +185,23 @@ func (siw *ServerInterfaceWrapper) CreateTenant(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
-// DeleteTenant operation middleware
-func (siw *ServerInterfaceWrapper) DeleteTenant(w http.ResponseWriter, r *http.Request) {
+// DeleteCompany operation middleware
+func (siw *ServerInterfaceWrapper) DeleteCompany(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
-	// ------------- Path parameter "tenant" -------------
-	var tenant TenantSlug
+	// ------------- Path parameter "company" -------------
+	var company CompanySlug
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tenant", r.PathValue("tenant"), &tenant, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "company", r.PathValue("company"), &company, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tenant", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "company", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteTenant(w, r, tenant)
+		siw.Handler.DeleteCompany(w, r, company)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -211,23 +211,23 @@ func (siw *ServerInterfaceWrapper) DeleteTenant(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
-// GetTenant operation middleware
-func (siw *ServerInterfaceWrapper) GetTenant(w http.ResponseWriter, r *http.Request) {
+// GetCompany operation middleware
+func (siw *ServerInterfaceWrapper) GetCompany(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
-	// ------------- Path parameter "tenant" -------------
-	var tenant TenantSlug
+	// ------------- Path parameter "company" -------------
+	var company CompanySlug
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tenant", r.PathValue("tenant"), &tenant, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "company", r.PathValue("company"), &company, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tenant", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "company", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetTenant(w, r, tenant)
+		siw.Handler.GetCompany(w, r, company)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -237,23 +237,23 @@ func (siw *ServerInterfaceWrapper) GetTenant(w http.ResponseWriter, r *http.Requ
 	handler.ServeHTTP(w, r)
 }
 
-// UpdateTenant operation middleware
-func (siw *ServerInterfaceWrapper) UpdateTenant(w http.ResponseWriter, r *http.Request) {
+// UpdateCompany operation middleware
+func (siw *ServerInterfaceWrapper) UpdateCompany(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
-	// ------------- Path parameter "tenant" -------------
-	var tenant TenantSlug
+	// ------------- Path parameter "company" -------------
+	var company CompanySlug
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tenant", r.PathValue("tenant"), &tenant, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "company", r.PathValue("company"), &company, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tenant", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "company", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.UpdateTenant(w, r, tenant)
+		siw.Handler.UpdateCompany(w, r, company)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -269,12 +269,12 @@ func (siw *ServerInterfaceWrapper) ListTasks(w http.ResponseWriter, r *http.Requ
 	var err error
 	_ = err
 
-	// ------------- Path parameter "tenant" -------------
-	var tenant TenantSlug
+	// ------------- Path parameter "company" -------------
+	var company CompanySlug
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tenant", r.PathValue("tenant"), &tenant, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "company", r.PathValue("company"), &company, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tenant", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "company", Err: err})
 		return
 	}
 
@@ -295,7 +295,7 @@ func (siw *ServerInterfaceWrapper) ListTasks(w http.ResponseWriter, r *http.Requ
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.ListTasks(w, r, tenant, params)
+		siw.Handler.ListTasks(w, r, company, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -311,17 +311,17 @@ func (siw *ServerInterfaceWrapper) CreateTask(w http.ResponseWriter, r *http.Req
 	var err error
 	_ = err
 
-	// ------------- Path parameter "tenant" -------------
-	var tenant TenantSlug
+	// ------------- Path parameter "company" -------------
+	var company CompanySlug
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tenant", r.PathValue("tenant"), &tenant, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "company", r.PathValue("company"), &company, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tenant", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "company", Err: err})
 		return
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateTask(w, r, tenant)
+		siw.Handler.CreateTask(w, r, company)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -337,12 +337,12 @@ func (siw *ServerInterfaceWrapper) DeleteTask(w http.ResponseWriter, r *http.Req
 	var err error
 	_ = err
 
-	// ------------- Path parameter "tenant" -------------
-	var tenant TenantSlug
+	// ------------- Path parameter "company" -------------
+	var company CompanySlug
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tenant", r.PathValue("tenant"), &tenant, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "company", r.PathValue("company"), &company, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tenant", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "company", Err: err})
 		return
 	}
 
@@ -356,7 +356,7 @@ func (siw *ServerInterfaceWrapper) DeleteTask(w http.ResponseWriter, r *http.Req
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.DeleteTask(w, r, tenant, id)
+		siw.Handler.DeleteTask(w, r, company, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -372,12 +372,12 @@ func (siw *ServerInterfaceWrapper) GetTask(w http.ResponseWriter, r *http.Reques
 	var err error
 	_ = err
 
-	// ------------- Path parameter "tenant" -------------
-	var tenant TenantSlug
+	// ------------- Path parameter "company" -------------
+	var company CompanySlug
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tenant", r.PathValue("tenant"), &tenant, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "company", r.PathValue("company"), &company, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tenant", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "company", Err: err})
 		return
 	}
 
@@ -391,7 +391,7 @@ func (siw *ServerInterfaceWrapper) GetTask(w http.ResponseWriter, r *http.Reques
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetTask(w, r, tenant, id)
+		siw.Handler.GetTask(w, r, company, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -407,12 +407,12 @@ func (siw *ServerInterfaceWrapper) UpdateTask(w http.ResponseWriter, r *http.Req
 	var err error
 	_ = err
 
-	// ------------- Path parameter "tenant" -------------
-	var tenant TenantSlug
+	// ------------- Path parameter "company" -------------
+	var company CompanySlug
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tenant", r.PathValue("tenant"), &tenant, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	err = runtime.BindStyledParameterWithOptions("simple", "company", r.PathValue("company"), &company, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tenant", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "company", Err: err})
 		return
 	}
 
@@ -426,7 +426,7 @@ func (siw *ServerInterfaceWrapper) UpdateTask(w http.ResponseWriter, r *http.Req
 	}
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.UpdateTask(w, r, tenant, id)
+		siw.Handler.UpdateTask(w, r, company, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -556,16 +556,16 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/tenants", wrapper.ListTenants)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/tenants", wrapper.CreateTenant)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/tenants/{tenant}", wrapper.DeleteTenant)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/tenants/{tenant}", wrapper.GetTenant)
-	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/tenants/{tenant}", wrapper.UpdateTenant)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/tenants/{tenant}/tasks", wrapper.ListTasks)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/tenants/{tenant}/tasks", wrapper.CreateTask)
-	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/tenants/{tenant}/tasks/{id}", wrapper.DeleteTask)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/tenants/{tenant}/tasks/{id}", wrapper.GetTask)
-	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/tenants/{tenant}/tasks/{id}", wrapper.UpdateTask)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/companies", wrapper.ListCompanies)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/companies", wrapper.CreateCompany)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/companies/{company}", wrapper.DeleteCompany)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/companies/{company}", wrapper.GetCompany)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/companies/{company}", wrapper.UpdateCompany)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/companies/{company}/tasks", wrapper.ListTasks)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/companies/{company}/tasks", wrapper.CreateTask)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/companies/{company}/tasks/{id}", wrapper.DeleteTask)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/companies/{company}/tasks/{id}", wrapper.GetTask)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/companies/{company}/tasks/{id}", wrapper.UpdateTask)
 
 	return m
 }
@@ -576,16 +576,16 @@ type ConflictJSONResponse Error
 
 type NotFoundJSONResponse Error
 
-type ListTenantsRequestObject struct {
+type ListCompaniesRequestObject struct {
 }
 
-type ListTenantsResponseObject interface {
-	VisitListTenantsResponse(w http.ResponseWriter) error
+type ListCompaniesResponseObject interface {
+	VisitListCompaniesResponse(w http.ResponseWriter) error
 }
 
-type ListTenants200JSONResponse []Tenant
+type ListCompanies200JSONResponse []Company
 
-func (response ListTenants200JSONResponse) VisitListTenantsResponse(w http.ResponseWriter) error {
+func (response ListCompanies200JSONResponse) VisitListCompaniesResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -597,17 +597,17 @@ func (response ListTenants200JSONResponse) VisitListTenantsResponse(w http.Respo
 	return err
 }
 
-type CreateTenantRequestObject struct {
-	Body *CreateTenantJSONRequestBody
+type CreateCompanyRequestObject struct {
+	Body *CreateCompanyJSONRequestBody
 }
 
-type CreateTenantResponseObject interface {
-	VisitCreateTenantResponse(w http.ResponseWriter) error
+type CreateCompanyResponseObject interface {
+	VisitCreateCompanyResponse(w http.ResponseWriter) error
 }
 
-type CreateTenant201JSONResponse Tenant
+type CreateCompany201JSONResponse Company
 
-func (response CreateTenant201JSONResponse) VisitCreateTenantResponse(w http.ResponseWriter) error {
+func (response CreateCompany201JSONResponse) VisitCreateCompanyResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -619,9 +619,9 @@ func (response CreateTenant201JSONResponse) VisitCreateTenantResponse(w http.Res
 	return err
 }
 
-type CreateTenant400JSONResponse struct{ BadRequestJSONResponse }
+type CreateCompany400JSONResponse struct{ BadRequestJSONResponse }
 
-func (response CreateTenant400JSONResponse) VisitCreateTenantResponse(w http.ResponseWriter) error {
+func (response CreateCompany400JSONResponse) VisitCreateCompanyResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -633,9 +633,9 @@ func (response CreateTenant400JSONResponse) VisitCreateTenantResponse(w http.Res
 	return err
 }
 
-type CreateTenant409JSONResponse struct{ ConflictJSONResponse }
+type CreateCompany409JSONResponse struct{ ConflictJSONResponse }
 
-func (response CreateTenant409JSONResponse) VisitCreateTenantResponse(w http.ResponseWriter) error {
+func (response CreateCompany409JSONResponse) VisitCreateCompanyResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -647,61 +647,25 @@ func (response CreateTenant409JSONResponse) VisitCreateTenantResponse(w http.Res
 	return err
 }
 
-type DeleteTenantRequestObject struct {
-	Tenant TenantSlug `json:"tenant"`
+type DeleteCompanyRequestObject struct {
+	Company CompanySlug `json:"company"`
 }
 
-type DeleteTenantResponseObject interface {
-	VisitDeleteTenantResponse(w http.ResponseWriter) error
+type DeleteCompanyResponseObject interface {
+	VisitDeleteCompanyResponse(w http.ResponseWriter) error
 }
 
-type DeleteTenant204Response struct {
+type DeleteCompany204Response struct {
 }
 
-func (response DeleteTenant204Response) VisitDeleteTenantResponse(w http.ResponseWriter) error {
+func (response DeleteCompany204Response) VisitDeleteCompanyResponse(w http.ResponseWriter) error {
 	w.WriteHeader(204)
 	return nil
 }
 
-type DeleteTenant404JSONResponse struct{ NotFoundJSONResponse }
+type DeleteCompany404JSONResponse struct{ NotFoundJSONResponse }
 
-func (response DeleteTenant404JSONResponse) VisitDeleteTenantResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetTenantRequestObject struct {
-	Tenant TenantSlug `json:"tenant"`
-}
-
-type GetTenantResponseObject interface {
-	VisitGetTenantResponse(w http.ResponseWriter) error
-}
-
-type GetTenant200JSONResponse Tenant
-
-func (response GetTenant200JSONResponse) VisitGetTenantResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type GetTenant404JSONResponse struct{ NotFoundJSONResponse }
-
-func (response GetTenant404JSONResponse) VisitGetTenantResponse(w http.ResponseWriter) error {
+func (response DeleteCompany404JSONResponse) VisitDeleteCompanyResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -713,18 +677,17 @@ func (response GetTenant404JSONResponse) VisitGetTenantResponse(w http.ResponseW
 	return err
 }
 
-type UpdateTenantRequestObject struct {
-	Tenant TenantSlug `json:"tenant"`
-	Body   *UpdateTenantJSONRequestBody
+type GetCompanyRequestObject struct {
+	Company CompanySlug `json:"company"`
 }
 
-type UpdateTenantResponseObject interface {
-	VisitUpdateTenantResponse(w http.ResponseWriter) error
+type GetCompanyResponseObject interface {
+	VisitGetCompanyResponse(w http.ResponseWriter) error
 }
 
-type UpdateTenant200JSONResponse Tenant
+type GetCompany200JSONResponse Company
 
-func (response UpdateTenant200JSONResponse) VisitUpdateTenantResponse(w http.ResponseWriter) error {
+func (response GetCompany200JSONResponse) VisitGetCompanyResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -736,9 +699,46 @@ func (response UpdateTenant200JSONResponse) VisitUpdateTenantResponse(w http.Res
 	return err
 }
 
-type UpdateTenant400JSONResponse struct{ BadRequestJSONResponse }
+type GetCompany404JSONResponse struct{ NotFoundJSONResponse }
 
-func (response UpdateTenant400JSONResponse) VisitUpdateTenantResponse(w http.ResponseWriter) error {
+func (response GetCompany404JSONResponse) VisitGetCompanyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCompanyRequestObject struct {
+	Company CompanySlug `json:"company"`
+	Body    *UpdateCompanyJSONRequestBody
+}
+
+type UpdateCompanyResponseObject interface {
+	VisitUpdateCompanyResponse(w http.ResponseWriter) error
+}
+
+type UpdateCompany200JSONResponse Company
+
+func (response UpdateCompany200JSONResponse) VisitUpdateCompanyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateCompany400JSONResponse struct{ BadRequestJSONResponse }
+
+func (response UpdateCompany400JSONResponse) VisitUpdateCompanyResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -750,9 +750,9 @@ func (response UpdateTenant400JSONResponse) VisitUpdateTenantResponse(w http.Res
 	return err
 }
 
-type UpdateTenant404JSONResponse struct{ NotFoundJSONResponse }
+type UpdateCompany404JSONResponse struct{ NotFoundJSONResponse }
 
-func (response UpdateTenant404JSONResponse) VisitUpdateTenantResponse(w http.ResponseWriter) error {
+func (response UpdateCompany404JSONResponse) VisitUpdateCompanyResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -765,8 +765,8 @@ func (response UpdateTenant404JSONResponse) VisitUpdateTenantResponse(w http.Res
 }
 
 type ListTasksRequestObject struct {
-	Tenant TenantSlug `json:"tenant"`
-	Params ListTasksParams
+	Company CompanySlug `json:"company"`
+	Params  ListTasksParams
 }
 
 type ListTasksResponseObject interface {
@@ -802,8 +802,8 @@ func (response ListTasks404JSONResponse) VisitListTasksResponse(w http.ResponseW
 }
 
 type CreateTaskRequestObject struct {
-	Tenant TenantSlug `json:"tenant"`
-	Body   *CreateTaskJSONRequestBody
+	Company CompanySlug `json:"company"`
+	Body    *CreateTaskJSONRequestBody
 }
 
 type CreateTaskResponseObject interface {
@@ -853,8 +853,8 @@ func (response CreateTask404JSONResponse) VisitCreateTaskResponse(w http.Respons
 }
 
 type DeleteTaskRequestObject struct {
-	Tenant TenantSlug `json:"tenant"`
-	ID     TaskID     `json:"id"`
+	Company CompanySlug `json:"company"`
+	ID      TaskID      `json:"id"`
 }
 
 type DeleteTaskResponseObject interface {
@@ -884,8 +884,8 @@ func (response DeleteTask404JSONResponse) VisitDeleteTaskResponse(w http.Respons
 }
 
 type GetTaskRequestObject struct {
-	Tenant TenantSlug `json:"tenant"`
-	ID     TaskID     `json:"id"`
+	Company CompanySlug `json:"company"`
+	ID      TaskID      `json:"id"`
 }
 
 type GetTaskResponseObject interface {
@@ -921,9 +921,9 @@ func (response GetTask404JSONResponse) VisitGetTaskResponse(w http.ResponseWrite
 }
 
 type UpdateTaskRequestObject struct {
-	Tenant TenantSlug `json:"tenant"`
-	ID     TaskID     `json:"id"`
-	Body   *UpdateTaskJSONRequestBody
+	Company CompanySlug `json:"company"`
+	ID      TaskID      `json:"id"`
+	Body    *UpdateTaskJSONRequestBody
 }
 
 type UpdateTaskResponseObject interface {
@@ -974,35 +974,35 @@ func (response UpdateTask404JSONResponse) VisitUpdateTaskResponse(w http.Respons
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
-	// ListTenants List tenants
-	// (GET /v1/tenants)
-	ListTenants(ctx context.Context, request ListTenantsRequestObject) (ListTenantsResponseObject, error)
-	// CreateTenant Create a tenant
-	// (POST /v1/tenants)
-	CreateTenant(ctx context.Context, request CreateTenantRequestObject) (CreateTenantResponseObject, error)
-	// DeleteTenant Delete a tenant
-	// (DELETE /v1/tenants/{tenant})
-	DeleteTenant(ctx context.Context, request DeleteTenantRequestObject) (DeleteTenantResponseObject, error)
-	// GetTenant Get a tenant
-	// (GET /v1/tenants/{tenant})
-	GetTenant(ctx context.Context, request GetTenantRequestObject) (GetTenantResponseObject, error)
-	// UpdateTenant Update a tenant
-	// (PATCH /v1/tenants/{tenant})
-	UpdateTenant(ctx context.Context, request UpdateTenantRequestObject) (UpdateTenantResponseObject, error)
+	// ListCompanies List companies
+	// (GET /v1/companies)
+	ListCompanies(ctx context.Context, request ListCompaniesRequestObject) (ListCompaniesResponseObject, error)
+	// CreateCompany Create a company
+	// (POST /v1/companies)
+	CreateCompany(ctx context.Context, request CreateCompanyRequestObject) (CreateCompanyResponseObject, error)
+	// DeleteCompany Delete a company
+	// (DELETE /v1/companies/{company})
+	DeleteCompany(ctx context.Context, request DeleteCompanyRequestObject) (DeleteCompanyResponseObject, error)
+	// GetCompany Get a company
+	// (GET /v1/companies/{company})
+	GetCompany(ctx context.Context, request GetCompanyRequestObject) (GetCompanyResponseObject, error)
+	// UpdateCompany Update a company
+	// (PATCH /v1/companies/{company})
+	UpdateCompany(ctx context.Context, request UpdateCompanyRequestObject) (UpdateCompanyResponseObject, error)
 	// ListTasks List tasks
-	// (GET /v1/tenants/{tenant}/tasks)
+	// (GET /v1/companies/{company}/tasks)
 	ListTasks(ctx context.Context, request ListTasksRequestObject) (ListTasksResponseObject, error)
 	// CreateTask Create a task
-	// (POST /v1/tenants/{tenant}/tasks)
+	// (POST /v1/companies/{company}/tasks)
 	CreateTask(ctx context.Context, request CreateTaskRequestObject) (CreateTaskResponseObject, error)
 	// DeleteTask Delete a task
-	// (DELETE /v1/tenants/{tenant}/tasks/{id})
+	// (DELETE /v1/companies/{company}/tasks/{id})
 	DeleteTask(ctx context.Context, request DeleteTaskRequestObject) (DeleteTaskResponseObject, error)
 	// GetTask Get a task
-	// (GET /v1/tenants/{tenant}/tasks/{id})
+	// (GET /v1/companies/{company}/tasks/{id})
 	GetTask(ctx context.Context, request GetTaskRequestObject) (GetTaskResponseObject, error)
 	// UpdateTask Update a task
-	// (PATCH /v1/tenants/{tenant}/tasks/{id})
+	// (PATCH /v1/companies/{company}/tasks/{id})
 	UpdateTask(ctx context.Context, request UpdateTaskRequestObject) (UpdateTaskResponseObject, error)
 }
 
@@ -1045,23 +1045,23 @@ type strictHandler struct {
 	options     StrictHTTPServerOptions
 }
 
-// ListTenants operation middleware
-func (sh *strictHandler) ListTenants(w http.ResponseWriter, r *http.Request) {
-	var request ListTenantsRequestObject
+// ListCompanies operation middleware
+func (sh *strictHandler) ListCompanies(w http.ResponseWriter, r *http.Request) {
+	var request ListCompaniesRequestObject
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.ListTenants(ctx, request.(ListTenantsRequestObject))
+		return sh.ssi.ListCompanies(ctx, request.(ListCompaniesRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "ListTenants")
+		handler = middleware(handler, "ListCompanies")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(ListTenantsResponseObject); ok {
-		if err := validResponse.VisitListTenantsResponse(w); err != nil {
+	} else if validResponse, ok := response.(ListCompaniesResponseObject); ok {
+		if err := validResponse.VisitListCompaniesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1069,11 +1069,11 @@ func (sh *strictHandler) ListTenants(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// CreateTenant operation middleware
-func (sh *strictHandler) CreateTenant(w http.ResponseWriter, r *http.Request) {
-	var request CreateTenantRequestObject
+// CreateCompany operation middleware
+func (sh *strictHandler) CreateCompany(w http.ResponseWriter, r *http.Request) {
+	var request CreateCompanyRequestObject
 
-	var body CreateTenantJSONRequestBody
+	var body CreateCompanyJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
@@ -1081,18 +1081,18 @@ func (sh *strictHandler) CreateTenant(w http.ResponseWriter, r *http.Request) {
 	request.Body = &body
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.CreateTenant(ctx, request.(CreateTenantRequestObject))
+		return sh.ssi.CreateCompany(ctx, request.(CreateCompanyRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "CreateTenant")
+		handler = middleware(handler, "CreateCompany")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(CreateTenantResponseObject); ok {
-		if err := validResponse.VisitCreateTenantResponse(w); err != nil {
+	} else if validResponse, ok := response.(CreateCompanyResponseObject); ok {
+		if err := validResponse.VisitCreateCompanyResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1100,25 +1100,25 @@ func (sh *strictHandler) CreateTenant(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// DeleteTenant operation middleware
-func (sh *strictHandler) DeleteTenant(w http.ResponseWriter, r *http.Request, tenant TenantSlug) {
-	var request DeleteTenantRequestObject
+// DeleteCompany operation middleware
+func (sh *strictHandler) DeleteCompany(w http.ResponseWriter, r *http.Request, company CompanySlug) {
+	var request DeleteCompanyRequestObject
 
-	request.Tenant = tenant
+	request.Company = company
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.DeleteTenant(ctx, request.(DeleteTenantRequestObject))
+		return sh.ssi.DeleteCompany(ctx, request.(DeleteCompanyRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "DeleteTenant")
+		handler = middleware(handler, "DeleteCompany")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(DeleteTenantResponseObject); ok {
-		if err := validResponse.VisitDeleteTenantResponse(w); err != nil {
+	} else if validResponse, ok := response.(DeleteCompanyResponseObject); ok {
+		if err := validResponse.VisitDeleteCompanyResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1126,25 +1126,25 @@ func (sh *strictHandler) DeleteTenant(w http.ResponseWriter, r *http.Request, te
 	}
 }
 
-// GetTenant operation middleware
-func (sh *strictHandler) GetTenant(w http.ResponseWriter, r *http.Request, tenant TenantSlug) {
-	var request GetTenantRequestObject
+// GetCompany operation middleware
+func (sh *strictHandler) GetCompany(w http.ResponseWriter, r *http.Request, company CompanySlug) {
+	var request GetCompanyRequestObject
 
-	request.Tenant = tenant
+	request.Company = company
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.GetTenant(ctx, request.(GetTenantRequestObject))
+		return sh.ssi.GetCompany(ctx, request.(GetCompanyRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "GetTenant")
+		handler = middleware(handler, "GetCompany")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(GetTenantResponseObject); ok {
-		if err := validResponse.VisitGetTenantResponse(w); err != nil {
+	} else if validResponse, ok := response.(GetCompanyResponseObject); ok {
+		if err := validResponse.VisitGetCompanyResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1152,13 +1152,13 @@ func (sh *strictHandler) GetTenant(w http.ResponseWriter, r *http.Request, tenan
 	}
 }
 
-// UpdateTenant operation middleware
-func (sh *strictHandler) UpdateTenant(w http.ResponseWriter, r *http.Request, tenant TenantSlug) {
-	var request UpdateTenantRequestObject
+// UpdateCompany operation middleware
+func (sh *strictHandler) UpdateCompany(w http.ResponseWriter, r *http.Request, company CompanySlug) {
+	var request UpdateCompanyRequestObject
 
-	request.Tenant = tenant
+	request.Company = company
 
-	var body UpdateTenantJSONRequestBody
+	var body UpdateCompanyJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
 		return
@@ -1166,18 +1166,18 @@ func (sh *strictHandler) UpdateTenant(w http.ResponseWriter, r *http.Request, te
 	request.Body = &body
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.UpdateTenant(ctx, request.(UpdateTenantRequestObject))
+		return sh.ssi.UpdateCompany(ctx, request.(UpdateCompanyRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "UpdateTenant")
+		handler = middleware(handler, "UpdateCompany")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(UpdateTenantResponseObject); ok {
-		if err := validResponse.VisitUpdateTenantResponse(w); err != nil {
+	} else if validResponse, ok := response.(UpdateCompanyResponseObject); ok {
+		if err := validResponse.VisitUpdateCompanyResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1186,10 +1186,10 @@ func (sh *strictHandler) UpdateTenant(w http.ResponseWriter, r *http.Request, te
 }
 
 // ListTasks operation middleware
-func (sh *strictHandler) ListTasks(w http.ResponseWriter, r *http.Request, tenant TenantSlug, params ListTasksParams) {
+func (sh *strictHandler) ListTasks(w http.ResponseWriter, r *http.Request, company CompanySlug, params ListTasksParams) {
 	var request ListTasksRequestObject
 
-	request.Tenant = tenant
+	request.Company = company
 	request.Params = params
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
@@ -1213,10 +1213,10 @@ func (sh *strictHandler) ListTasks(w http.ResponseWriter, r *http.Request, tenan
 }
 
 // CreateTask operation middleware
-func (sh *strictHandler) CreateTask(w http.ResponseWriter, r *http.Request, tenant TenantSlug) {
+func (sh *strictHandler) CreateTask(w http.ResponseWriter, r *http.Request, company CompanySlug) {
 	var request CreateTaskRequestObject
 
-	request.Tenant = tenant
+	request.Company = company
 
 	var body CreateTaskJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1246,10 +1246,10 @@ func (sh *strictHandler) CreateTask(w http.ResponseWriter, r *http.Request, tena
 }
 
 // DeleteTask operation middleware
-func (sh *strictHandler) DeleteTask(w http.ResponseWriter, r *http.Request, tenant TenantSlug, id TaskID) {
+func (sh *strictHandler) DeleteTask(w http.ResponseWriter, r *http.Request, company CompanySlug, id TaskID) {
 	var request DeleteTaskRequestObject
 
-	request.Tenant = tenant
+	request.Company = company
 	request.ID = id
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
@@ -1273,10 +1273,10 @@ func (sh *strictHandler) DeleteTask(w http.ResponseWriter, r *http.Request, tena
 }
 
 // GetTask operation middleware
-func (sh *strictHandler) GetTask(w http.ResponseWriter, r *http.Request, tenant TenantSlug, id TaskID) {
+func (sh *strictHandler) GetTask(w http.ResponseWriter, r *http.Request, company CompanySlug, id TaskID) {
 	var request GetTaskRequestObject
 
-	request.Tenant = tenant
+	request.Company = company
 	request.ID = id
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
@@ -1300,10 +1300,10 @@ func (sh *strictHandler) GetTask(w http.ResponseWriter, r *http.Request, tenant 
 }
 
 // UpdateTask operation middleware
-func (sh *strictHandler) UpdateTask(w http.ResponseWriter, r *http.Request, tenant TenantSlug, id TaskID) {
+func (sh *strictHandler) UpdateTask(w http.ResponseWriter, r *http.Request, company CompanySlug, id TaskID) {
 	var request UpdateTaskRequestObject
 
-	request.Tenant = tenant
+	request.Company = company
 	request.ID = id
 
 	var body UpdateTaskJSONRequestBody
@@ -1338,30 +1338,30 @@ func (sh *strictHandler) UpdateTask(w http.ResponseWriter, r *http.Request, tena
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"CsXJlKTG5NMw5PZ5KrWZ/vLq1YRU19W/AQAA//8=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

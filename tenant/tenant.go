@@ -45,7 +45,14 @@ import (
 
 // Config configures DBs. Only Dir is required.
 type Config struct {
-	// Dir holds the tenant databases, as tenant_<id>.db. It's created if
+	// Name is what the app calls a tenant, such as "company", "club" or
+	// "account". It names the database files (<name>_<id>.db) and appears
+	// in errors, including Middleware's 404 ("<name> not found"). Changing
+	// it orphans existing files. Defaults to "tenant"; like an id, it may
+	// only hold letters, digits, '-' and '_'.
+	Name string
+
+	// Dir holds the tenant databases, as <Name>_<id>.db. It's created if
 	// needed.
 	Dir string
 
@@ -124,8 +131,15 @@ const (
 )
 
 // New returns a DBs and, unless IdleTimeout is negative, starts a goroutine
-// that closes idle databases; Close stops it.
+// that closes idle databases; Close stops it. It panics if Name isn't
+// valid.
 func New(cfg Config) *DBs {
+	if cfg.Name == "" {
+		cfg.Name = "tenant"
+	}
+	if !validID.MatchString(cfg.Name) {
+		panic(fmt.Sprintf("tenant: invalid Config.Name %q", cfg.Name))
+	}
 	if cfg.MaxOpen <= 0 {
 		cfg.MaxOpen = 256
 	}
@@ -148,13 +162,18 @@ func New(cfg Config) *DBs {
 	return d
 }
 
+// Name returns Config.Name: what the app calls a tenant.
+func (d *DBs) Name() string {
+	return d.cfg.Name
+}
+
 // Path returns the file path of tenant id's database. It fails if id isn't
 // 1-64 letters, digits, '-' or '_', so it's always a plain file in Dir.
 func (d *DBs) Path(id string) (string, error) {
 	if !validID.MatchString(id) {
 		return "", fmt.Errorf("tenant: invalid id %q", id)
 	}
-	return filepath.Join(d.cfg.Dir, "tenant_"+id+".db"), nil
+	return filepath.Join(d.cfg.Dir, d.cfg.Name+"_"+id+".db"), nil
 }
 
 // Acquire returns tenant id's database, opening and migrating it if
@@ -204,7 +223,7 @@ func (d *DBs) MigrateAll(ctx context.Context, ids []string) error {
 		}
 		_, release, err := d.acquire(ctx, id, modeMigrate)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("tenant %s: %w", id, err))
+			errs = append(errs, fmt.Errorf("%s %s: %w", d.cfg.Name, id, err))
 			continue
 		}
 		release()

@@ -4,7 +4,7 @@
 
 package model
 
-type Tenant struct {
+type Company struct {
 	ID        int64
 	Slug      string
 	Name      string

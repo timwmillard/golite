@@ -1,4 +1,4 @@
-// Package migrations embeds each tenant database's SQL migrations.
+// Package migrations embeds each company database's SQL migrations.
 package migrations
 
 import "embed"

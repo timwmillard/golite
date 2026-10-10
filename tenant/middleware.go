@@ -10,7 +10,8 @@ import (
 )
 
 // ErrNotFound is returned by a Resolver when the request names a tenant
-// that doesn't exist. Middleware answers it with a 404.
+// that doesn't exist. Middleware answers it with a 404 of
+// {"error": "<Config.Name> not found"}.
 var ErrNotFound = errors.New("tenant not found")
 
 // Resolver returns the ID of the tenant r is for, or "" if r isn't for a
@@ -29,11 +30,12 @@ type Resolver func(r *http.Request) (string, error)
 // StdHTTPServerOptions.Middlewares: those run after routing, so the
 // Resolver can read path parameters with r.PathValue.
 func (d *DBs) Middleware(resolve Resolver) func(http.Handler) http.Handler {
+	notFound := d.cfg.Name + " not found"
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id, err := resolve(r)
 			if errors.Is(err, ErrNotFound) {
-				server.WriteError(w, http.StatusNotFound, ErrNotFound.Error())
+				server.WriteError(w, http.StatusNotFound, notFound)
 				return
 			}
 			if err != nil {
@@ -47,7 +49,7 @@ func (d *DBs) Middleware(resolve Resolver) func(http.Handler) http.Handler {
 
 			db, release, err := d.Acquire(r.Context(), id)
 			if errors.Is(err, ErrNotExist) {
-				server.WriteError(w, http.StatusNotFound, ErrNotFound.Error())
+				server.WriteError(w, http.StatusNotFound, notFound)
 				return
 			}
 			if err != nil {

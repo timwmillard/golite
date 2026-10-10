@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -104,6 +105,31 @@ func TestAcquire_SeparateDatabases(t *testing.T) {
 	if n != 0 {
 		t.Errorf("tenant b sees %d rows written to tenant a", n)
 	}
+}
+
+func TestName(t *testing.T) {
+	dir := t.TempDir()
+	d := New(Config{Dir: dir, IdleTimeout: -1})
+	defer d.Close()
+	if p, _ := d.Path("7"); p != filepath.Join(dir, "tenant_7.db") {
+		t.Errorf("default Path = %s, want tenant_7.db", p)
+	}
+
+	club := New(Config{Name: "club", Dir: dir, IdleTimeout: -1})
+	defer club.Close()
+	if p, _ := club.Path("7"); p != filepath.Join(dir, "club_7.db") {
+		t.Errorf("Path with Name club = %s, want club_7.db", p)
+	}
+	if err := club.MigrateAll(t.Context(), []string{"bad/id"}); err == nil || !strings.HasPrefix(err.Error(), "club bad/id:") {
+		t.Errorf("MigrateAll error = %v, want it to name the club", err)
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Error("New with an invalid Name didn't panic")
+		}
+	}()
+	New(Config{Name: "../x", Dir: dir})
 }
 
 func TestAcquire_InvalidID(t *testing.T) {
@@ -544,7 +570,7 @@ func TestConcurrent(t *testing.T) {
 }
 
 func TestMiddleware(t *testing.T) {
-	d := newDBs(t, Config{})
+	d := newDBs(t, Config{Name: "club"})
 	if err := d.Create(t.Context(), "acme"); err != nil {
 		t.Fatal(err)
 	}
@@ -592,6 +618,9 @@ func TestMiddleware(t *testing.T) {
 		mux.ServeHTTP(w, httptest.NewRequest("GET", tt.path, nil))
 		if w.Code != tt.status {
 			t.Errorf("%s: status %d, want %d", tt.path, w.Code, tt.status)
+		}
+		if tt.status == http.StatusNotFound && !strings.Contains(w.Body.String(), `"club not found"`) {
+			t.Errorf("%s: body %s, want it to say club not found", tt.path, w.Body)
 		}
 		if gotID != tt.id {
 			t.Errorf("%s: tenant ID %q, want %q", tt.path, gotID, tt.id)

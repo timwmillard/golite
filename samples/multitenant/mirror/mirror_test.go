@@ -10,24 +10,24 @@ import (
 	"github.com/timwmillard/golite/server"
 	"github.com/timwmillard/golite/tenant"
 
+	companymigrations "github.com/timwmillard/golite/samples/multitenant/companydb/migrations"
+	"github.com/timwmillard/golite/samples/multitenant/companydb/model"
 	mastermigrations "github.com/timwmillard/golite/samples/multitenant/master/migrations"
 	mastermodel "github.com/timwmillard/golite/samples/multitenant/master/model"
-	tenantmigrations "github.com/timwmillard/golite/samples/multitenant/tenantdb/migrations"
-	"github.com/timwmillard/golite/samples/multitenant/tenantdb/model"
 )
 
-func TestTenant(t *testing.T) {
+func TestCompany(t *testing.T) {
 	dir := t.TempDir()
 	master, err := server.OpenDB(t.Context(), filepath.Join(dir, "master.db"), mastermigrations.FS)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer master.Close()
-	dbs := tenant.New(tenant.Config{Dir: filepath.Join(dir, "tenants"), Migrations: tenantmigrations.FS, IdleTimeout: -1})
+	dbs := tenant.New(tenant.Config{Name: "company", Dir: filepath.Join(dir, "companies"), Migrations: companymigrations.FS, IdleTimeout: -1})
 	defer dbs.Close()
 
 	q := mastermodel.New(master)
-	mt, err := q.CreateTenant(t.Context(), mastermodel.CreateTenantParams{Slug: "acme", Name: "Acme", CreatedAt: 1})
+	mt, err := q.CreateCompany(t.Context(), mastermodel.CreateCompanyParams{Slug: "acme", Name: "Acme", CreatedAt: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,9 +45,9 @@ func TestTenant(t *testing.T) {
 	}
 
 	sync := All(master)[0].Sync
-	run := func() model.Tenant {
+	run := func() model.Company {
 		t.Helper()
-		var row model.Tenant
+		var row model.Company
 		err := dbs.Do(t.Context(), id, func(db *sql.DB) error {
 			tx, err := db.BeginTx(t.Context(), nil)
 			if err != nil {
@@ -57,7 +57,7 @@ func TestTenant(t *testing.T) {
 			if err := sync(context.Background(), tx, id, ""); err != nil {
 				return err
 			}
-			if row, err = model.New(tx).GetTenant(t.Context()); err != nil {
+			if row, err = model.New(tx).GetCompany(t.Context()); err != nil {
 				return err
 			}
 			return tx.Commit()
@@ -69,12 +69,12 @@ func TestTenant(t *testing.T) {
 	}
 
 	if got := run(); got.Name != "Acme" || got.Slug != "acme" || got.MasterID != mt.ID {
-		t.Errorf("after first sync, tenant row = %+v", got)
+		t.Errorf("after first sync, company row = %+v", got)
 	}
-	if _, err := q.UpdateTenant(t.Context(), mastermodel.UpdateTenantParams{Slug: "acme", Name: "Acme Inc"}); err != nil {
+	if _, err := q.UpdateCompany(t.Context(), mastermodel.UpdateCompanyParams{Slug: "acme", Name: "Acme Inc"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := run(); got.Name != "Acme Inc" {
-		t.Errorf("after rename, tenant name = %q", got.Name)
+		t.Errorf("after rename, company name = %q", got.Name)
 	}
 }

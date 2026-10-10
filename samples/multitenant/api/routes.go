@@ -17,20 +17,20 @@ import (
 	"github.com/timwmillard/golite/samples/multitenant/master/model"
 )
 
-// handlers implements StrictServerInterface: tenant operations on the master
-// database, task operations on each tenant's own.
+// handlers implements StrictServerInterface: company operations on the master
+// database, task operations on each company's own.
 type handlers struct {
-	*TenantHandler
+	*CompanyHandler
 	*TaskHandler
 }
 
 // Register mounts the API's routes, plus the spec at GET /openapi.json, on
-// mux. Routes below /v1/tenants/{tenant}/ run against that tenant's
+// mux. Routes below /v1/companies/{company}/ run against that company's
 // database from dbs; the rest use master.
 func Register(mux *http.ServeMux, master *sql.DB, dbs *tenant.DBs, riverClient *river.Client[*sql.Tx]) {
 	h := NewStrictHandlerWithOptions(handlers{
-		TenantHandler: NewTenantHandler(master, dbs, riverClient),
-		TaskHandler:   &TaskHandler{},
+		CompanyHandler: NewCompanyHandler(master, dbs, riverClient),
+		TaskHandler:    &TaskHandler{},
 	}, nil, StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  server.RequestError,
 		ResponseErrorHandlerFunc: server.ResponseError,
@@ -38,29 +38,29 @@ func Register(mux *http.ServeMux, master *sql.DB, dbs *tenant.DBs, riverClient *
 	HandlerWithOptions(h, StdHTTPServerOptions{
 		BaseRouter:       mux,
 		ErrorHandlerFunc: server.RequestError,
-		Middlewares:      []MiddlewareFunc{dbs.Middleware(resolveTenant(model.New(master)))},
+		Middlewares:      []MiddlewareFunc{dbs.Middleware(resolveCompany(model.New(master)))},
 	})
 
 	mux.HandleFunc("GET /openapi.json", serveSpec)
 }
 
-// resolveTenant maps the {tenant} slug in the path to the tenant's ID,
-// which names its database. /v1/tenants/{tenant} itself also has the slug
+// resolveCompany maps the {company} slug in the path to the company's ID,
+// which names its database. /v1/companies/{company} itself also has the slug
 // but only touches the master database, so it only resolves routes below
-// a tenant. This is where an app would also check the caller may
-// access the tenant.
-func resolveTenant(q *model.Queries) tenant.Resolver {
+// a company. This is where an app would also check the caller may
+// access the company.
+func resolveCompany(q *model.Queries) tenant.Resolver {
 	return func(r *http.Request) (string, error) {
-		if !strings.Contains(r.Pattern, "/v1/tenants/{tenant}/") {
+		if !strings.Contains(r.Pattern, "/v1/companies/{company}/") {
 			return "", nil
 		}
 
-		t, err := q.GetTenantBySlug(r.Context(), r.PathValue("tenant"))
+		t, err := q.GetCompanyBySlug(r.Context(), r.PathValue("company"))
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", tenant.ErrNotFound
 		}
 		if err != nil {
-			return "", fmt.Errorf("resolve tenant: %w", err)
+			return "", fmt.Errorf("resolve company: %w", err)
 		}
 		return conv.FormatID(t.ID), nil
 	}

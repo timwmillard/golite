@@ -1,5 +1,5 @@
-// Package multitenant is an example golite app where each tenant gets its
-// own SQLite database, alongside a master database listing the tenants.
+// Package multitenant is an example golite app where each company gets its
+// own SQLite database, alongside a master database listing the companies.
 // Like samples/todo it uses an OpenAPI spec (oapi-codegen strict server)
 // and sqlc queries. Run `go generate` after editing api/spec.yaml or the
 // queries.

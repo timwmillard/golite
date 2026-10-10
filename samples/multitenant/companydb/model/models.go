@@ -8,6 +8,14 @@ import (
 	"database/sql"
 )
 
+type Company struct {
+	ID       int64
+	MasterID int64
+	Slug     string
+	Name     string
+	SyncedAt int64
+}
+
 type Task struct {
 	ID          int64
 	Title       string
@@ -15,12 +23,4 @@ type Task struct {
 	Done        int64
 	CreatedAt   int64
 	CompletedAt sql.NullInt64
-}
-
-type Tenant struct {
-	ID       int64
-	MasterID int64
-	Slug     string
-	Name     string
-	SyncedAt int64
 }

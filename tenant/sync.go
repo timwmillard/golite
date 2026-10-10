@@ -165,7 +165,7 @@ func (w *syncWorker) Work(ctx context.Context, job *river.Job[SyncArgs]) error {
 		if err := w.s.dbs.Delete(ctx, args.Tenant); err != nil {
 			return err
 		}
-		return river.JobCancel(fmt.Errorf("tenant %s no longer exists", args.Tenant))
+		return river.JobCancel(fmt.Errorf("%s %s no longer exists", w.s.dbs.Name(), args.Tenant))
 	}
 	return nil
 }
