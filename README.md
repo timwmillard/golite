@@ -34,3 +34,12 @@ Runnable samples:
 - [`samples/server`](samples/server): River worker, RiverUI and hand-written JSON handlers.
 - [`samples/todo`](samples/todo): OpenAPI spec (oapi-codegen strict server) plus sqlc queries. It's a separate module so the codegen tools stay out of golite's `go.mod`.
 - [`samples/multitenant`](samples/multitenant): the todo API made multi-tenant with `tenant`, where the tenants are companies: a master database lists the companies and runs River, and each company's tasks live in its own database, named after its slug and renamed when the slug changes. `tenant.Sync` jobs carry master changes to the tenant databases; package `mirror` defines what's copied. Also a separate module.
+
+Start a new project from a sample with `cmd/golite`:
+
+```sh
+go install github.com/timwmillard/golite/cmd/golite@latest
+golite new                  # pick a sample from a menu
+golite new todo myapp       # into ./myapp, module myapp
+golite new -module github.com/me/myapp multitenant myapp
+```
