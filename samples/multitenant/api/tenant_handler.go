@@ -17,12 +17,12 @@ import (
 	"github.com/timwmillard/golite/tenant"
 
 	"github.com/timwmillard/golite/samples/multitenant/master/model"
-	"github.com/timwmillard/golite/samples/multitenant/tenantsync"
+	"github.com/timwmillard/golite/samples/multitenant/mirror"
 )
 
 // TenantHandler implements the tenant operations of StrictServerInterface
 // against the master database. Changes reach each tenant's own database
-// through tenantsync jobs, inserted in the same transaction as the change.
+// through tenant.Sync jobs, inserted in the same transaction as the change.
 type TenantHandler struct {
 	master *sql.DB
 	q      *model.Queries
@@ -72,8 +72,7 @@ func (h *TenantHandler) CreateTenant(ctx context.Context, request CreateTenantRe
 		if err != nil {
 			return err
 		}
-		_, err = h.river.InsertTx(ctx, tx, tenantsync.SyncArgs{TenantID: t.ID}, nil)
-		return err
+		return tenant.InsertSyncTx(ctx, h.river, tx, mirror.Tenant, conv.FormatID(t.ID), "")
 	})
 	if sqliteErr := (sqlite3.Error{}); errors.As(err, &sqliteErr) && sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique {
 		return CreateTenant409JSONResponse{ConflictJSONResponse{Error: "tenant already exists"}}, nil
@@ -117,8 +116,7 @@ func (h *TenantHandler) UpdateTenant(ctx context.Context, request UpdateTenantRe
 		if err != nil {
 			return err
 		}
-		_, err = h.river.InsertTx(ctx, tx, tenantsync.SyncArgs{TenantID: t.ID}, nil)
-		return err
+		return tenant.InsertSyncTx(ctx, h.river, tx, mirror.Tenant, conv.FormatID(t.ID), "")
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return UpdateTenant404JSONResponse{tenantNotFound}, nil
@@ -138,8 +136,7 @@ func (h *TenantHandler) DeleteTenant(ctx context.Context, request DeleteTenantRe
 		if err != nil {
 			return err
 		}
-		_, err = h.river.InsertTx(ctx, tx, tenantsync.DeleteArgs{TenantID: t.ID}, nil)
-		return err
+		return tenant.InsertDeleteTx(ctx, h.river, tx, conv.FormatID(t.ID))
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return DeleteTenant404JSONResponse{tenantNotFound}, nil

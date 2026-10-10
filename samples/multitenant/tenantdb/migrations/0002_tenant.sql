@@ -1,5 +1,5 @@
--- The tenant's own copy of its master row, kept up to date by the
--- tenantsync jobs, so its database describes itself in a backup or export.
+-- The tenant's own copy of its master row, kept up to date by
+-- tenant.Sync (see package mirror), so its database describes itself in a backup or export.
 -- There's only ever one row.
 create table tenant (
     id        integer primary key check (id = 1),

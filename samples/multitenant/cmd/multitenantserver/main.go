@@ -2,8 +2,8 @@
 // lists the tenants and holds the River job queue; each tenant's tasks live
 // in its own data/tenants/tenant_<id>.db. Tenant databases open when first
 // used and close when idle or when too many are open, so there can be far
-// more tenants than open files. River jobs (package tenantsync) carry
-// changes from master to the tenant databases.
+// more tenants than open files. tenant.Sync's River jobs carry
+// changes from master to the tenant databases (see package mirror).
 //
 //	go generate ./...   # after editing api/spec.yaml or the queries
 //	go run ./cmd/multitenantserver
@@ -43,8 +43,8 @@ import (
 	"github.com/timwmillard/golite/samples/multitenant/api"
 	mastermigrations "github.com/timwmillard/golite/samples/multitenant/master/migrations"
 	mastermodel "github.com/timwmillard/golite/samples/multitenant/master/model"
+	"github.com/timwmillard/golite/samples/multitenant/mirror"
 	tenantmigrations "github.com/timwmillard/golite/samples/multitenant/tenantdb/migrations"
-	"github.com/timwmillard/golite/samples/multitenant/tenantsync"
 )
 
 func main() {
@@ -84,8 +84,16 @@ func run(ctx context.Context) error {
 		return migrateAll(ctx, master, dbs)
 	}
 
+	tenantSync, err := tenant.NewSync(tenant.SyncConfig{
+		DBs:     dbs,
+		Exists:  mirror.Exists(master),
+		Mirrors: mirror.All(master),
+	})
+	if err != nil {
+		return err
+	}
 	workers := river.NewWorkers()
-	tenantsync.AddWorkers(workers, master, dbs)
+	tenantSync.AddWorkers(workers)
 	cfg.DB, cfg.Workers = master, workers // River runs on master; GET /health pings it
 
 	srv, err := server.New(ctx, cfg)
