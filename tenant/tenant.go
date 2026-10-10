@@ -82,6 +82,13 @@ var ErrClosed = errors.New("tenant: DBs is closed")
 // created.
 var ErrNotExist = errors.New("tenant: database does not exist")
 
+// ErrExists is returned by Rename when the new id's database already exists.
+var ErrExists = errors.New("tenant: database already exists")
+
+// ErrRenaming is returned by Acquire while the tenant's database is being
+// renamed.
+var ErrRenaming = errors.New("tenant: database is being renamed")
+
 // ErrDeleting is returned by Acquire while the tenant is being deleted.
 var ErrDeleting = errors.New("tenant: database is being deleted")
 
@@ -112,8 +119,10 @@ type entry struct {
 	lastUsed time.Time     // when users last dropped to 0
 	elem     *list.Element // position in DBs.idle while users == 0
 
-	deleting bool
-	unused   chan struct{} // closed when users drops to 0 during a Delete
+	// claim is ErrDeleting or ErrRenaming while Delete or Rename has the
+	// database; Acquire fails with it meanwhile.
+	claim  error
+	unused chan struct{} // closed when users drops to 0 while claimed
 
 	// cold marks a database MigrateAll opened just to migrate: it's closed
 	// when released rather than kept as most recently used, unless a real
@@ -127,7 +136,7 @@ type mode int
 const (
 	modeUse     mode = iota // Acquire: the database must exist
 	modeCreate              // Create: create it if needed
-	modeMigrate             // MigrateAll: create it if needed, don't keep it open
+	modeMigrate             // MigrateAll: the database must exist; don't keep it open
 )
 
 // New returns a DBs and, unless IdleTimeout is negative, starts a goroutine
@@ -202,8 +211,9 @@ func (d *DBs) Create(ctx context.Context, id string) error {
 	return nil
 }
 
-// MigrateAll applies pending migrations to each tenant in ids, creating any
-// database that doesn't exist yet. Tenants are opened only to be migrated
+// MigrateAll applies pending migrations to each tenant in ids; one whose
+// database doesn't exist is an error (ErrNotExist), not created, so a stale
+// id can't bring back an empty database. Tenants are opened only to be migrated
 // and closed again, one at a time, so a run over thousands of tenants
 // doesn't push the tenants in actual use out of the open set; tenants
 // already open were migrated when they opened and are skipped.
@@ -243,9 +253,9 @@ func (d *DBs) acquire(ctx context.Context, id string, mode mode) (db *sql.DB, re
 		return nil, nil, ErrClosed
 	}
 	e, ok := d.entries[id]
-	if ok && e.deleting {
+	if ok && e.claim != nil {
 		d.mu.Unlock()
-		return nil, nil, ErrDeleting
+		return nil, nil, e.claim
 	}
 	if ok && mode == modeMigrate {
 		// Open (or being opened), so migrated by whoever opened it. Leave
@@ -285,7 +295,7 @@ func (d *DBs) acquire(ctx context.Context, id string, mode mode) (db *sql.DB, re
 
 	// Delete can't remove the file between this check and the open: it
 	// waits for e's users, which include us.
-	if _, err := os.Stat(path); mode == modeUse && errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Stat(path); mode != modeCreate && errors.Is(err, fs.ErrNotExist) {
 		e.err = ErrNotExist
 	} else {
 		// Detach from ctx so a cancelled request can't leave a
@@ -346,7 +356,7 @@ func (d *DBs) release(e *entry) {
 
 	var evicted []*sql.DB
 	switch {
-	case e.deleting:
+	case e.claim != nil:
 		close(e.unused)
 	case d.entries[e.id] != e:
 		// Failed to open, or closed: nothing to track.
@@ -418,8 +428,7 @@ func closeAll(dbs []*sql.DB) {
 // Delete closes tenant id's database and removes its file along with
 // SQLite's -wal and -shm files. If the database is in use it first waits,
 // until ctx is done, for the users to release it; meanwhile Acquire fails
-// with ErrDeleting. Stop routing work to the tenant before deleting it, or
-// a later Acquire will create a new, empty database.
+// with ErrDeleting. Stop routing work to the tenant before deleting it.
 func (d *DBs) Delete(ctx context.Context, id string) error {
 	path, err := d.Path(id)
 	if err != nil {
@@ -427,37 +436,15 @@ func (d *DBs) Delete(ctx context.Context, id string) error {
 	}
 
 	d.mu.Lock()
-	if d.entries == nil {
-		d.mu.Unlock()
-		return ErrClosed
-	}
-	e, ok := d.entries[id]
-	if ok && e.deleting {
-		d.mu.Unlock()
-		return ErrDeleting
-	}
-	if !ok {
-		// Hold the id while the files go, so Acquire can't recreate them.
-		e = &entry{id: id, ready: make(chan struct{})}
-		close(e.ready)
-		d.entries[id] = e
-	}
-	e.deleting = true
-	e.unused = make(chan struct{})
-	if e.users == 0 {
-		close(e.unused)
-	}
-	if e.elem != nil {
-		d.idle.Remove(e.elem)
-		e.elem = nil
-	}
+	e, err := d.claim(id, ErrDeleting)
 	d.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	defer d.drop(e)
 
-	select {
-	case <-e.unused:
-	case <-ctx.Done():
-		d.cancelDelete(e)
-		return ctx.Err()
+	if err := d.waitUnused(ctx, e); err != nil {
+		return err
 	}
 
 	err = nil
@@ -471,31 +458,228 @@ func (d *DBs) Delete(ctx context.Context, id string) error {
 			err = errors.Join(err, fmt.Errorf("remove tenant database: %w", rerr))
 		}
 	}
-
-	d.mu.Lock()
-	if d.entries != nil && d.entries[id] == e {
-		delete(d.entries, id)
-	}
-	d.mu.Unlock()
 	return err
 }
 
-// cancelDelete undoes Delete's claim on e when it gives up waiting.
-func (d *DBs) cancelDelete(e *entry) {
+// Rename moves tenant from's database to id to. If the database is in use
+// it first waits, until ctx is done, for the users to release it;
+// meanwhile, and until Rename returns, Acquire of either id fails with
+// ErrRenaming. It fails with ErrExists if to's database exists, and
+// ErrNotExist if from's doesn't.
+//
+// commit, if not nil, is called once the file has moved, still with both
+// ids held, to record the new id (typically in the master database). If it
+// fails the file is moved back, so the file and the record never disagree
+// unless the process dies in between. For that case, if from's database is
+// missing but to's exists, Rename assumes an earlier Rename got as far as
+// moving it and just calls commit again. So only rename to an id reserved
+// for this tenant, as Sync's registry does.
+func (d *DBs) Rename(ctx context.Context, from, to string, commit func(context.Context) error) error {
+	fromPath, err := d.Path(from)
+	if err != nil {
+		return err
+	}
+	toPath, err := d.Path(to)
+	if err != nil {
+		return err
+	}
+	if from == to {
+		return fmt.Errorf("tenant: rename %s to itself", from)
+	}
+
 	d.mu.Lock()
-	e.deleting = false
-	var evicted []*sql.DB
-	if e.users == 0 && d.entries[e.id] == e {
-		if e.db == nil {
-			delete(d.entries, e.id) // Delete's placeholder
-		} else {
-			e.lastUsed = time.Now()
-			e.elem = d.idle.PushFront(e)
-			evicted = d.evict()
-		}
+	if e, ok := d.entries[to]; ok && e.claim == nil {
+		d.mu.Unlock()
+		return ErrExists // it's open, so its file exists
+	}
+	ef, err := d.claim(from, ErrRenaming)
+	if err != nil {
+		d.mu.Unlock()
+		return err
+	}
+	et, err := d.claim(to, ErrRenaming)
+	if err != nil {
+		evicted := d.unclaim(ef)
+		d.mu.Unlock()
+		closeAll(evicted)
+		return err
 	}
 	d.mu.Unlock()
-	closeAll(evicted)
+
+	if err := d.waitUnused(ctx, ef); err != nil {
+		d.mu.Lock()
+		d.unclaim(et)
+		d.mu.Unlock()
+		return err
+	}
+	defer d.drop(et)
+	defer d.drop(ef)
+
+	if ef.db != nil {
+		if err := ef.db.Close(); err != nil {
+			return fmt.Errorf("close tenant database %s: %w", fromPath, err)
+		}
+	}
+
+	// From here on finish what's started even if ctx is cancelled, so the
+	// file and the commit agree.
+	return renameFile(context.WithoutCancel(ctx), fromPath, toPath, commit)
+}
+
+// renameFile moves the closed database at from to to, then calls commit,
+// moving it back if commit fails. See Rename.
+func renameFile(ctx context.Context, from, to string, commit func(context.Context) error) error {
+	fromOK, err := fileExists(from)
+	if err != nil {
+		return err
+	}
+	toOK, err := fileExists(to)
+	if err != nil {
+		return err
+	}
+
+	moved := false
+	switch {
+	case fromOK && toOK:
+		return ErrExists
+	case !fromOK && !toOK:
+		return ErrNotExist
+	case fromOK:
+		// Closing the last connection checkpoints the WAL and removes
+		// it, leaving one file to move atomically. A WAL with data in it
+		// means another process has the database open.
+		if err := removeEmptySidecars(from); err != nil {
+			return err
+		}
+		if err := os.Rename(from, to); err != nil {
+			return fmt.Errorf("rename tenant database: %w", err)
+		}
+		if err := syncDir(filepath.Dir(to)); err != nil {
+			return err
+		}
+		moved = true
+	}
+	// Otherwise !fromOK && toOK: an earlier Rename moved it but didn't
+	// commit.
+
+	if commit == nil {
+		return nil
+	}
+	if err := commit(ctx); err != nil {
+		if moved {
+			if rerr := os.Rename(to, from); rerr != nil {
+				return errors.Join(err, fmt.Errorf("move tenant database back: %w", rerr))
+			}
+			_ = syncDir(filepath.Dir(from))
+		}
+		return err
+	}
+	return nil
+}
+
+func fileExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// removeEmptySidecars removes path's -wal and -shm files if the WAL is
+// empty, and fails if it isn't.
+func removeEmptySidecars(path string) error {
+	if fi, err := os.Stat(path + "-wal"); err == nil && fi.Size() > 0 {
+		return fmt.Errorf("tenant: %s has a non-empty WAL; is another process using it?", filepath.Base(path))
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Remove(path + suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+// syncDir makes a rename in dir durable.
+func syncDir(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("sync %s: %w", dir, err)
+	}
+	return nil
+}
+
+// claim marks id's database as held by Delete or Rename (c is ErrDeleting
+// or ErrRenaming), so Acquire fails with c, adding a placeholder entry if
+// it isn't open. Wait for its users with waitUnused. d.mu must be held.
+func (d *DBs) claim(id string, c error) (*entry, error) {
+	if d.entries == nil {
+		return nil, ErrClosed
+	}
+	e, ok := d.entries[id]
+	if ok && e.claim != nil {
+		return nil, e.claim
+	}
+	if !ok {
+		e = &entry{id: id, ready: make(chan struct{})}
+		close(e.ready)
+		d.entries[id] = e
+	}
+	e.claim = c
+	e.unused = make(chan struct{})
+	if e.users == 0 {
+		close(e.unused)
+	}
+	if e.elem != nil {
+		d.idle.Remove(e.elem)
+		e.elem = nil
+	}
+	return e, nil
+}
+
+// waitUnused waits for a claimed entry's users to release it. If ctx is
+// done first it gives up the claim.
+func (d *DBs) waitUnused(ctx context.Context, e *entry) error {
+	select {
+	case <-e.unused:
+		return nil
+	case <-ctx.Done():
+		d.mu.Lock()
+		evicted := d.unclaim(e)
+		d.mu.Unlock()
+		closeAll(evicted)
+		return ctx.Err()
+	}
+}
+
+// unclaim gives up a claim, leaving the database open (and idle, if it has
+// no users) or, for a placeholder, forgetting it. It returns databases to
+// close once d.mu is released. d.mu must be held.
+func (d *DBs) unclaim(e *entry) []*sql.DB {
+	e.claim = nil
+	if e.users > 0 || d.entries[e.id] != e {
+		return nil
+	}
+	if e.db == nil {
+		delete(d.entries, e.id)
+		return nil
+	}
+	e.lastUsed = time.Now()
+	e.elem = d.idle.PushFront(e)
+	return d.evict()
+}
+
+// drop forgets a claimed entry once Delete or Rename is done with it. Its
+// database, if any, has been closed.
+func (d *DBs) drop(e *entry) {
+	d.mu.Lock()
+	if e.claim != nil && d.entries != nil && d.entries[e.id] == e {
+		delete(d.entries, e.id)
+	}
+	d.mu.Unlock()
 }
 
 // Stats describes the databases a DBs holds open.
@@ -530,7 +714,7 @@ func (d *DBs) Close() error {
 	var errs []error
 	for _, e := range entries {
 		<-e.ready
-		if e.db != nil && !e.deleting {
+		if e.db != nil && e.claim == nil {
 			errs = append(errs, e.db.Close())
 		}
 	}

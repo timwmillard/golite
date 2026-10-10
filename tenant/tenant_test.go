@@ -217,15 +217,19 @@ func TestMigrateAll(t *testing.T) {
 	}
 	d.closeIdle(time.Now())
 
-	// A new migration ships; "c" has no database yet.
+	// A new migration ships; "c" has no database, and mustn't get one.
 	fsys["0002_more.sql"] = &fstest.MapFile{Data: []byte(`create table more (id integer primary key)`)}
-	if err := d.MigrateAll(t.Context(), ids); err != nil {
-		t.Fatalf("MigrateAll: %v", err)
+	err := d.MigrateAll(t.Context(), ids)
+	if !errors.Is(err, ErrNotExist) || !strings.Contains(err.Error(), "tenant c:") {
+		t.Fatalf("MigrateAll = %v, want ErrNotExist for c only", err)
 	}
 	if s := d.Stats(); s.Open != 0 {
 		t.Errorf("Stats = %+v after MigrateAll, want nothing left open", s)
 	}
-	for _, id := range ids {
+	if _, _, err := d.Acquire(t.Context(), "c"); !errors.Is(err, ErrNotExist) {
+		t.Errorf("MigrateAll created c: %v", err)
+	}
+	for _, id := range ids[:2] {
 		err := d.Do(t.Context(), id, func(db *sql.DB) error {
 			_, err := db.Exec(`insert into more default values`)
 			return err
@@ -240,6 +244,12 @@ func TestMigrateAll(t *testing.T) {
 // set, nor reorder them.
 func TestMigrateAll_KeepsHotTenantsOpen(t *testing.T) {
 	d := newDBs(t, Config{MaxOpen: 2})
+	for _, id := range []string{"c1", "c2", "c3", "c4"} {
+		if err := d.Create(t.Context(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d.closeIdle(time.Now())
 
 	h1, release := acquire(t, d, "hot1")
 	release()
@@ -266,6 +276,10 @@ func TestMigrateAll_KeepsHotTenantsOpen(t *testing.T) {
 // A database MigrateAll opened stays open if a request starts using it.
 func TestMigrateAll_ColdBecomesHot(t *testing.T) {
 	d := newDBs(t, Config{})
+	if err := d.Create(t.Context(), "acme"); err != nil {
+		t.Fatal(err)
+	}
+	d.closeIdle(time.Now())
 
 	_, releaseMigrate, err := d.acquire(t.Context(), "acme", modeMigrate)
 	if err != nil {
@@ -296,6 +310,10 @@ func TestMigrateAll_StopsWithContext(t *testing.T) {
 
 func TestMigrateAll_ContinuesPastFailures(t *testing.T) {
 	d := newDBs(t, Config{})
+	if err := d.Create(t.Context(), "ok"); err != nil {
+		t.Fatal(err)
+	}
+	d.closeIdle(time.Now())
 
 	err := d.MigrateAll(t.Context(), []string{"bad/id", "ok", "also/bad"})
 	if err == nil {

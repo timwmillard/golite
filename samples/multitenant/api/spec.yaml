@@ -107,6 +107,38 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /v1/companies/{company}/slug:
+    parameters:
+      - $ref: '#/components/parameters/CompanySlug'
+    put:
+      operationId: updateSlug
+      summary: Change a company's slug
+      description: |
+        The company is at its new URL straight away. Its database file,
+        named after the slug, is renamed once requests in flight on it
+        finish; meanwhile its task routes may briefly answer 503.
+      tags:
+        - Companies
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSlugRequest'
+      responses:
+        '200':
+          description: Slug changed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Company'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
   /v1/companies/{company}/tasks:
     parameters:
       - $ref: '#/components/parameters/CompanySlug'
@@ -267,7 +299,9 @@ components:
       properties:
         slug:
           type: string
-          description: URL-safe key used in /v1/companies/{company}. Lowercase letters, digits and '-'.
+          description: |
+            URL-safe key used in /v1/companies/{company}, and in the name of
+            the company's database file. Lowercase letters, digits and '-'.
           pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
         name:
           type: string
@@ -280,6 +314,14 @@ components:
         name:
           type: string
           minLength: 1
+
+    UpdateSlugRequest:
+      type: object
+      required: [slug]
+      properties:
+        slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
 
     Task:
       type: object

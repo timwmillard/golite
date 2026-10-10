@@ -29,7 +29,8 @@ delete from company
 where slug = ?
 returning *;
 
--- name: ListCompanyIDs :many
-select id
-from company
-order by id;
+-- name: UpdateSlug :one
+update company
+set slug = sqlc.arg(new_slug)
+where slug = sqlc.arg(slug)
+returning *;

@@ -21,12 +21,14 @@ import (
 )
 
 // CompanyHandler implements the company operations of StrictServerInterface
-// against the master database. Changes reach each company's own database
-// through tenant.Sync jobs, inserted in the same transaction as the change.
+// against the master database. Each company's database is named after its
+// slug and tracked in tenant.Sync's registry under the company's id, which
+// never changes; changes reach the database through tenant.Sync jobs,
+// inserted in the same transaction as the change.
 type CompanyHandler struct {
 	master *sql.DB
 	q      *model.Queries
-	dbs    *tenant.DBs
+	sync   *tenant.Sync
 	river  *river.Client[*sql.Tx]
 
 	// notFound matches the 404 tenant.Middleware sends for an unknown
@@ -34,19 +36,21 @@ type CompanyHandler struct {
 	notFound NotFoundJSONResponse
 }
 
-func NewCompanyHandler(master *sql.DB, dbs *tenant.DBs, riverClient *river.Client[*sql.Tx]) *CompanyHandler {
+func NewCompanyHandler(master *sql.DB, dbs *tenant.DBs, companySync *tenant.Sync, riverClient *river.Client[*sql.Tx]) *CompanyHandler {
 	return &CompanyHandler{
 		master:   master,
 		q:        model.New(master),
-		dbs:      dbs,
+		sync:     companySync,
 		river:    riverClient,
 		notFound: NotFoundJSONResponse{Error: dbs.Name() + " not found"},
 	}
 }
 
-// validSlug matches CreateCompanyRequest.slug's pattern in the spec, which
-// the generated server doesn't enforce.
+// validSlug matches the slug pattern in the spec, which the generated
+// server doesn't enforce. It also keeps slugs valid as tenant database ids.
 var validSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+const badSlug = "slug must be lowercase letters, digits and '-'"
 
 func (h *CompanyHandler) ListCompanies(ctx context.Context, request ListCompaniesRequestObject) (ListCompaniesResponseObject, error) {
 	companies, err := h.q.ListCompanies(ctx)
@@ -55,8 +59,8 @@ func (h *CompanyHandler) ListCompanies(ctx context.Context, request ListCompanie
 	}
 
 	resp := make(ListCompanies200JSONResponse, len(companies))
-	for i, t := range companies {
-		resp[i] = toAPICompany(t)
+	for i, c := range companies {
+		resp[i] = toAPICompany(c)
 	}
 	return resp, nil
 }
@@ -64,17 +68,17 @@ func (h *CompanyHandler) ListCompanies(ctx context.Context, request ListCompanie
 func (h *CompanyHandler) CreateCompany(ctx context.Context, request CreateCompanyRequestObject) (CreateCompanyResponseObject, error) {
 	body := request.Body
 	if !validSlug.MatchString(body.Slug) {
-		return CreateCompany400JSONResponse{BadRequestJSONResponse{Error: "slug must be lowercase letters, digits and '-'"}}, nil
+		return CreateCompany400JSONResponse{BadRequestJSONResponse{Error: badSlug}}, nil
 	}
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
 		return CreateCompany400JSONResponse{BadRequestJSONResponse{Error: "name is required"}}, nil
 	}
 
-	var t model.Company
+	var c model.Company
 	err := h.inTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		t, err = h.q.WithTx(tx).CreateCompany(ctx, model.CreateCompanyParams{
+		c, err = h.q.WithTx(tx).CreateCompany(ctx, model.CreateCompanyParams{
 			Slug:      body.Slug,
 			Name:      name,
 			CreatedAt: time.Now().Unix(),
@@ -82,27 +86,28 @@ func (h *CompanyHandler) CreateCompany(ctx context.Context, request CreateCompan
 		if err != nil {
 			return err
 		}
-		return tenant.InsertSyncTx(ctx, h.river, tx, mirror.Company, conv.FormatID(t.ID), "")
+		ref := conv.FormatID(c.ID)
+		if err := tenant.CreateTx(ctx, h.river, tx, ref, c.Slug); err != nil {
+			return err
+		}
+		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, ref, "")
 	})
-	if sqliteErr := (sqlite3.Error{}); errors.As(err, &sqliteErr) && sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique {
+	if isUnique(err) {
 		return CreateCompany409JSONResponse{ConflictJSONResponse{Error: "company already exists"}}, nil
+	}
+	if errors.Is(err, tenant.ErrIDTaken) {
+		return CreateCompany409JSONResponse{ConflictJSONResponse{Error: "slug was in use until recently; try again shortly"}}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("create company: %w", err)
 	}
 
-	// The sync job creates the database too, but not until a worker picks
-	// it up; create it now so the company is usable as soon as we respond.
-	// If this fails the job still will, so the company was still created.
-	if err := h.dbs.Create(ctx, conv.FormatID(t.ID)); err != nil {
-		slog.WarnContext(ctx, "Create company database failed; left to tenant_sync", "company", t.Slug, "err", err)
-	}
-
-	return CreateCompany201JSONResponse(toAPICompany(t)), nil
+	h.settle(ctx, c)
+	return CreateCompany201JSONResponse(toAPICompany(c)), nil
 }
 
 func (h *CompanyHandler) GetCompany(ctx context.Context, request GetCompanyRequestObject) (GetCompanyResponseObject, error) {
-	t, err := h.q.GetCompanyBySlug(ctx, request.Company)
+	c, err := h.q.GetCompanyBySlug(ctx, request.Company)
 	if errors.Is(err, sql.ErrNoRows) {
 		return GetCompany404JSONResponse{h.notFound}, nil
 	}
@@ -110,7 +115,7 @@ func (h *CompanyHandler) GetCompany(ctx context.Context, request GetCompanyReque
 		return nil, fmt.Errorf("get company: %w", err)
 	}
 
-	return GetCompany200JSONResponse(toAPICompany(t)), nil
+	return GetCompany200JSONResponse(toAPICompany(c)), nil
 }
 
 func (h *CompanyHandler) UpdateCompany(ctx context.Context, request UpdateCompanyRequestObject) (UpdateCompanyResponseObject, error) {
@@ -119,14 +124,14 @@ func (h *CompanyHandler) UpdateCompany(ctx context.Context, request UpdateCompan
 		return UpdateCompany400JSONResponse{BadRequestJSONResponse{Error: "name can't be empty"}}, nil
 	}
 
-	var t model.Company
+	var c model.Company
 	err := h.inTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		t, err = h.q.WithTx(tx).UpdateCompany(ctx, model.UpdateCompanyParams{Slug: request.Company, Name: name})
+		c, err = h.q.WithTx(tx).UpdateCompany(ctx, model.UpdateCompanyParams{Slug: request.Company, Name: name})
 		if err != nil {
 			return err
 		}
-		return tenant.InsertSyncTx(ctx, h.river, tx, mirror.Company, conv.FormatID(t.ID), "")
+		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, conv.FormatID(c.ID), "")
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return UpdateCompany404JSONResponse{h.notFound}, nil
@@ -135,18 +140,57 @@ func (h *CompanyHandler) UpdateCompany(ctx context.Context, request UpdateCompan
 		return nil, fmt.Errorf("update company: %w", err)
 	}
 
-	return UpdateCompany200JSONResponse(toAPICompany(t)), nil
+	return UpdateCompany200JSONResponse(toAPICompany(c)), nil
+}
+
+// UpdateSlug changes a company's slug, and so the name of its database
+// file. The new slug works straight away: requests find the database
+// through the registry, which keeps the old file name until the rename.
+func (h *CompanyHandler) UpdateSlug(ctx context.Context, request UpdateSlugRequestObject) (UpdateSlugResponseObject, error) {
+	slug := request.Body.Slug
+	if !validSlug.MatchString(slug) {
+		return UpdateSlug400JSONResponse{BadRequestJSONResponse{Error: badSlug}}, nil
+	}
+
+	var c model.Company
+	err := h.inTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		c, err = h.q.WithTx(tx).UpdateSlug(ctx, model.UpdateSlugParams{Slug: request.Company, NewSlug: slug})
+		if err != nil {
+			return err
+		}
+		ref := conv.FormatID(c.ID)
+		if err := tenant.RenameTx(ctx, h.river, tx, ref, slug); err != nil {
+			return err
+		}
+		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, ref, "")
+	})
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return UpdateSlug404JSONResponse{h.notFound}, nil
+	case isUnique(err):
+		return UpdateSlug409JSONResponse{ConflictJSONResponse{Error: "slug is taken"}}, nil
+	case errors.Is(err, tenant.ErrIDTaken):
+		return UpdateSlug409JSONResponse{ConflictJSONResponse{Error: "slug was in use until recently; try again shortly"}}, nil
+	case errors.Is(err, tenant.ErrRenamePending):
+		return UpdateSlug409JSONResponse{ConflictJSONResponse{Error: "the last slug change is still being applied; try again shortly"}}, nil
+	case err != nil:
+		return nil, fmt.Errorf("update slug: %w", err)
+	}
+
+	h.settle(ctx, c)
+	return UpdateSlug200JSONResponse(toAPICompany(c)), nil
 }
 
 func (h *CompanyHandler) DeleteCompany(ctx context.Context, request DeleteCompanyRequestObject) (DeleteCompanyResponseObject, error) {
 	// Once the master row is gone no new request resolves to the company;
-	// the job removes its database when the ones in flight finish.
+	// its settle job removes the database when the ones in flight finish.
 	err := h.inTx(ctx, func(tx *sql.Tx) error {
-		t, err := h.q.WithTx(tx).DeleteCompany(ctx, request.Company)
+		c, err := h.q.WithTx(tx).DeleteCompany(ctx, request.Company)
 		if err != nil {
 			return err
 		}
-		return tenant.InsertDeleteTx(ctx, h.river, tx, conv.FormatID(t.ID))
+		return tenant.DeleteTx(ctx, h.river, tx, conv.FormatID(c.ID))
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return DeleteCompany404JSONResponse{h.notFound}, nil
@@ -156,6 +200,17 @@ func (h *CompanyHandler) DeleteCompany(ctx context.Context, request DeleteCompan
 	}
 
 	return DeleteCompany204Response{}, nil
+}
+
+// settle creates or renames c's database now rather than waiting for its
+// tenant_settle job, which retries if this fails. It waits a few seconds
+// at most for requests in flight on the database.
+func (h *CompanyHandler) settle(ctx context.Context, c model.Company) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := h.sync.Settle(ctx, conv.FormatID(c.ID)); err != nil {
+		slog.WarnContext(ctx, "Settling company database failed; left to tenant_settle", "company", c.Slug, "err", err)
+	}
 }
 
 // inTx runs fn in a master database transaction, committing if it returns
@@ -171,4 +226,9 @@ func (h *CompanyHandler) inTx(ctx context.Context, fn func(*sql.Tx) error) error
 		return err
 	}
 	return tx.Commit()
+}
+
+func isUnique(err error) bool {
+	var sqliteErr sqlite3.Error
+	return errors.As(err, &sqliteErr) && sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique
 }

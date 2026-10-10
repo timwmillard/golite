@@ -36,14 +36,6 @@ func TestCompany(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	exists := Exists(master)
-	if ok, err := exists(t.Context(), id); !ok || err != nil {
-		t.Fatalf("Exists = %v, %v; want true", ok, err)
-	}
-	if ok, err := exists(t.Context(), "999"); ok || err != nil {
-		t.Fatalf("Exists(unknown) = %v, %v; want false", ok, err)
-	}
-
 	sync := All(master)[0].Sync
 	run := func() model.Company {
 		t.Helper()

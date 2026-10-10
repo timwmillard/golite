@@ -121,35 +121,6 @@ func (q *Queries) ListCompanies(ctx context.Context) ([]Company, error) {
 	return items, nil
 }
 
-const listCompanyIDs = `-- name: ListCompanyIDs :many
-select id
-from company
-order by id
-`
-
-func (q *Queries) ListCompanyIDs(ctx context.Context) ([]int64, error) {
-	rows, err := q.db.QueryContext(ctx, listCompanyIDs)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const updateCompany = `-- name: UpdateCompany :one
 update company
 set name = ?
@@ -164,6 +135,30 @@ type UpdateCompanyParams struct {
 
 func (q *Queries) UpdateCompany(ctx context.Context, arg UpdateCompanyParams) (Company, error) {
 	row := q.db.QueryRowContext(ctx, updateCompany, arg.Name, arg.Slug)
+	var i Company
+	err := row.Scan(
+		&i.ID,
+		&i.Slug,
+		&i.Name,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateSlug = `-- name: UpdateSlug :one
+update company
+set slug = ?1
+where slug = ?2
+returning id, slug, name, created_at
+`
+
+type UpdateSlugParams struct {
+	NewSlug string
+	Slug    string
+}
+
+func (q *Queries) UpdateSlug(ctx context.Context, arg UpdateSlugParams) (Company, error) {
+	row := q.db.QueryRowContext(ctx, updateSlug, arg.NewSlug, arg.Slug)
 	var i Company
 	err := row.Scan(
 		&i.ID,

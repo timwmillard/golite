@@ -1,7 +1,7 @@
 // Command multitenantserver serves the todo API for many companies, each
 // with its own database: a tenant, in golite's terms. data/master.db lists
 // the companies and holds the River job queue; each company's tasks live in
-// its own data/companies/company_<id>.db. Company databases open when first
+// its own data/companies/company_<slug>.db, renamed when the slug changes. Company databases open when first
 // used and close when idle or when too many are open, so there can be far
 // more companies than open files. tenant.Sync's River jobs carry changes
 // from master to the company databases (see package mirror).
@@ -12,7 +12,8 @@
 //	curl -X POST localhost:7880/v1/companies/acme/tasks -d '{"title":"Buy milk"}'
 //	curl localhost:7880/v1/companies/acme/tasks
 //	curl -X PATCH localhost:7880/v1/companies/acme -d '{"name":"Acme Inc"}'
-//	curl -X DELETE localhost:7880/v1/companies/acme
+//	curl -X PUT localhost:7880/v1/companies/acme/slug -d '{"slug":"acme-inc"}'
+//	curl -X DELETE localhost:7880/v1/companies/acme-inc
 //	open localhost:7880/riverui/
 //
 // Each company's database is migrated when it's opened. On startup the
@@ -25,10 +26,8 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"flag"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -37,14 +36,12 @@ import (
 
 	"github.com/riverqueue/river"
 
-	"github.com/timwmillard/golite/conv"
 	"github.com/timwmillard/golite/server"
 	"github.com/timwmillard/golite/tenant"
 
 	"github.com/timwmillard/golite/samples/multitenant/api"
 	companymigrations "github.com/timwmillard/golite/samples/multitenant/companydb/migrations"
 	mastermigrations "github.com/timwmillard/golite/samples/multitenant/master/migrations"
-	mastermodel "github.com/timwmillard/golite/samples/multitenant/master/model"
 	"github.com/timwmillard/golite/samples/multitenant/mirror"
 )
 
@@ -82,18 +79,19 @@ func run(ctx context.Context) error {
 	})
 	defer dbs.Close()
 
-	if *migrateCompanies {
-		return migrateAll(ctx, master, dbs)
-	}
-
-	companySync, err := tenant.NewSync(tenant.SyncConfig{
+	companySync, err := tenant.NewSync(ctx, tenant.SyncConfig{
 		DBs:     dbs,
-		Exists:  mirror.Exists(master),
+		Master:  master,
 		Mirrors: mirror.All(master),
 	})
 	if err != nil {
 		return err
 	}
+
+	if *migrateCompanies {
+		return migrateAll(ctx, companySync)
+	}
+
 	workers := river.NewWorkers()
 	companySync.AddWorkers(workers)
 	cfg.DB, cfg.Workers = master, workers // River runs on master; GET /health pings it
@@ -102,7 +100,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	api.Register(srv.Mux, master, dbs, srv.River)
+	api.Register(srv.Mux, master, dbs, companySync, srv.River)
 
 	// Stopped when Run returns, and waited for before dbs.Close.
 	bgCtx, cancel := context.WithCancel(ctx)
@@ -110,7 +108,7 @@ func run(ctx context.Context) error {
 	defer wg.Wait()
 	defer cancel()
 	wg.Go(func() {
-		err := migrateAll(bgCtx, master, dbs)
+		err := migrateAll(bgCtx, companySync)
 		if errors.Is(err, context.Canceled) {
 			slog.Info("Company migration stopped by shutdown")
 		} else if err != nil {
@@ -121,18 +119,13 @@ func run(ctx context.Context) error {
 	return srv.Run(ctx) // blocks until SIGINT/SIGTERM
 }
 
-// migrateAll applies pending migrations to every company in master.
-func migrateAll(ctx context.Context, master *sql.DB, dbs *tenant.DBs) error {
-	ids, err := mastermodel.New(master).ListCompanyIDs(ctx)
-	if err != nil {
-		return fmt.Errorf("list companies: %w", err)
-	}
-
+// migrateAll applies pending migrations to every company's database.
+func migrateAll(ctx context.Context, companySync *tenant.Sync) error {
 	start := time.Now()
-	slog.Info("Migrating companies", "count", len(ids))
-	if err := dbs.MigrateAll(ctx, conv.FormatIDs(ids)); err != nil {
+	slog.Info("Migrating companies")
+	if err := companySync.MigrateAll(ctx); err != nil {
 		return err
 	}
-	slog.Info("Migrated companies", "count", len(ids), "took", time.Since(start).Round(time.Millisecond))
+	slog.Info("Migrated companies", "took", time.Since(start).Round(time.Millisecond))
 	return nil
 }
