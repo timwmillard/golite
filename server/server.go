@@ -230,7 +230,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	serveErr := make(chan error, 1)
 	go func() {
-		log.Info("Starting server", "addr", s.cfg.Addr)
+		log.Info("Starting server", "addr", s.cfg.Addr, "url", localURL(s.cfg.Addr))
 		serveErr <- srv.ListenAndServe()
 	}()
 
@@ -260,4 +260,17 @@ func (s *Server) Run(ctx context.Context) error {
 		log.Info("Server stopped")
 	}
 	return runErr
+}
+
+// localURL returns a clickable URL for a listen address, using localhost
+// when bound to all interfaces.
+func localURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "http://" + addr
+	}
+	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/"
 }

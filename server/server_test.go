@@ -148,3 +148,24 @@ func TestHealth_Disabled(t *testing.T) {
 		t.Errorf("/health = %d, want app's handler", rec.Code)
 	}
 }
+
+func TestLocalURL(t *testing.T) {
+	tests := []struct {
+		addr string
+		want string
+	}{
+		{":8080", "http://localhost:8080/"},
+		{"0.0.0.0:8080", "http://localhost:8080/"},
+		{"[::]:8080", "http://localhost:8080/"},
+		{"127.0.0.1:8080", "http://127.0.0.1:8080/"},
+		{"[::1]:8080", "http://[::1]:8080/"},
+		{"example.com:8080", "http://example.com:8080/"},
+		{"localhost:8080", "http://localhost:8080/"},
+		{"bad", "http://bad"},
+	}
+	for _, tt := range tests {
+		if got := localURL(tt.addr); got != tt.want {
+			t.Errorf("localURL(%q) = %q, want %q", tt.addr, got, tt.want)
+		}
+	}
+}
