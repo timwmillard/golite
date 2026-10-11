@@ -79,12 +79,11 @@ func newSyncEnv(t *testing.T, pause func()) *syncEnv {
 		err := master.QueryRowContext(ctx, `select exists (select 1 from tenants where id = ?)`, id).Scan(&ok)
 		return ok, err
 	}
-	s, err := NewSync(SyncConfig{DBs: d, Exists: exists, Mirrors: []Mirror{copyMirror(master, pause)}})
+	workers := river.NewWorkers()
+	s, err := NewSync(SyncConfig{DBs: d, Exists: exists, Mirrors: []Mirror{copyMirror(master, pause)}, Workers: workers})
 	if err != nil {
 		t.Fatal(err)
 	}
-	workers := river.NewWorkers()
-	s.AddWorkers(workers)
 	// server.New migrates River's tables and makes the client; it's only
 	// used to insert, never started.
 	srv, err := server.New(ctx, server.Config{DB: master, Workers: workers, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})

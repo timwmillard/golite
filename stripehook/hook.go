@@ -8,12 +8,13 @@
 // arrived once the work is sure to happen, and River retries it until it
 // succeeds.
 //
-//	hook := stripehook.New(stripehook.Config{DB: db, Secret: os.Getenv("STRIPE_WEBHOOK_SECRET")})
+//	workers := river.NewWorkers()
+//	hook := stripehook.New(stripehook.Config{DB: db, Secret: os.Getenv("STRIPE_WEBHOOK_SECRET"), Workers: workers})
 //	stripehook.On(hook, "account.updated", func(ctx context.Context, tx *sql.Tx, ev stripehook.Event, acct *stripe.Account) error {
 //		_, err := tx.ExecContext(ctx, `update firm set charges_enabled = ? where stripe_account_id = ?`, acct.ChargesEnabled, acct.ID)
 //		return err
 //	})
-//	hook.AddWorkers(workers) // before server.New
+//	cfg.DB, cfg.Workers = db, workers
 //	srv, err := server.New(ctx, cfg)
 //	srv.Mux.Handle("POST /webhooks/stripe", hook.Handler(srv.River))
 //
@@ -104,6 +105,12 @@ type Config struct {
 
 	// Logger defaults to slog.Default().
 	Logger *slog.Logger
+
+	// Workers gets the worker that runs handlers. Set it to the registry
+	// given to server.New (so New comes first). It may be nil only if
+	// there are no handlers, e.g. when triggers do the work: On and
+	// OnEvent panic without it.
+	Workers *river.Workers
 }
 
 // Hook receives Stripe webhooks. Register handlers with On and OnEvent
@@ -114,16 +121,17 @@ type Hook struct {
 	tolerance time.Duration
 	secret    atomic.Pointer[string]
 	handlers  map[string][]HandlerFunc
+	working   bool // a worker is registered to run handlers
 }
 
-// New returns a Hook. Register its worker with AddWorkers, and serve
-// Handler at the endpoint registered with Stripe.
+// New returns a Hook. Serve Handler at the endpoint registered with Stripe.
 func New(cfg Config) *Hook {
 	h := &Hook{
 		db:        cfg.DB,
 		log:       cfg.Logger,
 		tolerance: cfg.Tolerance,
 		handlers:  map[string][]HandlerFunc{},
+		working:   cfg.Workers != nil,
 	}
 	if h.log == nil {
 		h.log = slog.Default()
@@ -132,6 +140,9 @@ func New(cfg Config) *Hook {
 		h.tolerance = DefaultTolerance
 	}
 	h.secret.Store(&cfg.Secret)
+	if cfg.Workers != nil {
+		river.AddWorker(cfg.Workers, &eventWorker{h: h})
+	}
 	return h
 }
 
@@ -144,7 +155,11 @@ func (h *Hook) SetSecret(secret string) {
 
 // OnEvent adds a handler for events of eventType, e.g. "account.updated".
 // An event's handlers run in the order they were added, in one transaction.
+// It panics if Config.Workers was nil, as nothing would run the handler.
 func (h *Hook) OnEvent(eventType string, fn HandlerFunc) {
+	if !h.working {
+		panic("stripehook: handler added but Config.Workers is nil")
+	}
 	h.handlers[eventType] = append(h.handlers[eventType], fn)
 }
 
@@ -287,11 +302,6 @@ type EventArgs struct {
 }
 
 func (EventArgs) Kind() string { return "stripehook_event" }
-
-// AddWorkers registers the worker for EventArgs.
-func (h *Hook) AddWorkers(workers *river.Workers) {
-	river.AddWorker(workers, &eventWorker{h: h})
-}
 
 type eventWorker struct {
 	river.WorkerDefaults[EventArgs]

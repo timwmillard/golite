@@ -93,10 +93,12 @@ func run(ctx context.Context) error {
 	defer dbs.Close()
 
 	q := mastermodel.New(master)
+	workers := river.NewWorkers()
 	companySync, err := tenant.NewSync(tenant.SyncConfig{
 		DBs:     dbs,
 		Exists:  q.CompanyExists,
 		Mirrors: mirror.All(master),
+		Workers: workers,
 	})
 	if err != nil {
 		return err
@@ -109,8 +111,6 @@ func run(ctx context.Context) error {
 		return rename(ctx, dbs, master, companySync, *renameCompany)
 	}
 
-	workers := river.NewWorkers()
-	companySync.AddWorkers(workers)
 	cfg.DB, cfg.Workers = master, workers // River runs on master; GET /health pings it
 
 	srv, err := server.New(ctx, cfg)

@@ -53,10 +53,14 @@ type SyncConfig struct {
 	Exists func(ctx context.Context, id string) (bool, error)
 
 	Mirrors []Mirror
+
+	// Workers, if set, gets the workers for CreateArgs and SyncArgs. Set
+	// it to the registry given to server.New (so NewSync comes first). Leave
+	// it nil where nothing works jobs, such as an offline script using Run.
+	Workers *river.Workers
 }
 
-// NewSync returns a Sync for the given mirrors. Register its workers with
-// AddWorkers.
+// NewSync returns a Sync for the given mirrors.
 func NewSync(cfg SyncConfig) (*Sync, error) {
 	if cfg.DBs == nil || cfg.Exists == nil {
 		return nil, errors.New("tenant: SyncConfig needs DBs and Exists")
@@ -71,13 +75,11 @@ func NewSync(cfg SyncConfig) (*Sync, error) {
 		}
 		s.mirrors[m.Name] = m
 	}
+	if cfg.Workers != nil {
+		river.AddWorker(cfg.Workers, &createWorker{s: s})
+		river.AddWorker(cfg.Workers, &syncWorker{s: s})
+	}
 	return s, nil
-}
-
-// AddWorkers registers the workers for CreateArgs and SyncArgs.
-func (s *Sync) AddWorkers(workers *river.Workers) {
-	river.AddWorker(workers, &createWorker{s: s})
-	river.AddWorker(workers, &syncWorker{s: s})
 }
 
 // AddStubWorkers registers placeholder workers for CreateArgs and SyncArgs,

@@ -45,12 +45,11 @@ func newEnv(t *testing.T, register func(*Hook)) *env {
 	t.Cleanup(func() { db.Close() })
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	hook := New(Config{DB: db, Secret: secret, Logger: logger})
+	workers := river.NewWorkers()
+	hook := New(Config{DB: db, Secret: secret, Logger: logger, Workers: workers})
 	if register != nil {
 		register(hook)
 	}
-	workers := river.NewWorkers()
-	hook.AddWorkers(workers)
 	// server.New migrates River's tables and makes the client; it's only
 	// used to insert, never started.
 	s, err := server.New(ctx, server.Config{DB: db, Workers: workers, Logger: logger})
@@ -314,4 +313,13 @@ func TestHandler_NoClientWithHandlers(t *testing.T) {
 	if n := e.count(t, `select count(*) from stripe_event`); n != 0 {
 		t.Errorf("events = %d, want 0 (rolled back)", n)
 	}
+}
+
+func TestOnEvent_PanicsWithoutWorkers(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("OnEvent without Workers didn't panic")
+		}
+	}()
+	New(Config{}).OnEvent("account.updated", logNote("x"))
 }
