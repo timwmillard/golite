@@ -35,11 +35,9 @@ func upgrade(want string) error {
 		}
 		want = latest
 	}
-	if !strings.HasPrefix(want, "v") {
-		want = "v" + want
-	}
-	if !versionRe.MatchString(want) {
-		return fmt.Errorf("invalid version %q, want vX.Y.Z", want)
+	want, err := normVersion(want)
+	if err != nil {
+		return err
 	}
 	if want == version {
 		fmt.Fprintf(os.Stderr, "tailwind: already at %s\n", version)

@@ -5,6 +5,16 @@
 //	go get -tool github.com/timwmillard/golite/tailwind
 //	go tool tailwind -i app/styles.css -o app/static/styles.css --minify
 //
+// An app can use another release, without a golite update, by passing
+// -version first:
+//
+//	go tool tailwind -version v4.4.0 -i app/styles.css -o app/static/styles.css
+//
+// The first download of a release golite doesn't pin records its checksums,
+// from the release's sha256sums.txt, in tailwind.sum in the current
+// directory. Commit that file: later downloads, on any machine, are checked
+// against it instead of trusting the release again.
+//
 // To bump the pinned version (latest release if no version is given), from
 // a golite checkout:
 //
@@ -54,7 +64,13 @@ func main() {
 		return
 	}
 
-	bin, err := ensure()
+	v, args, err := versionFlag(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tailwind:", err)
+		os.Exit(2)
+	}
+
+	bin, err := ensure(v)
 	if errors.Is(err, errUnsupported) {
 		// Fall back to a tailwindcss on PATH (npm, ports, etc.), or skip so the
 		// rest of go generate still runs against the checked-in styles.css.
@@ -63,14 +79,14 @@ func main() {
 			fmt.Fprintf(os.Stderr, "tailwind: no binary for %s/%s and no tailwindcss on PATH, skipping (using committed styles.css)\n", runtime.GOOS, runtime.GOARCH)
 			return
 		}
-		warnVersion(bin)
+		warnVersion(bin, v)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tailwind:", err)
 		os.Exit(1)
 	}
 
-	cmd := exec.Command(bin, os.Args[1:]...)
+	cmd := exec.Command(bin, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
@@ -82,8 +98,8 @@ func main() {
 	}
 }
 
-// ensure returns the path to the pinned binary, downloading it if missing.
-func ensure() (string, error) {
+// ensure returns the path to release v's binary, downloading it if missing.
+func ensure(v string) (string, error) {
 	asset, err := assetName()
 	if err != nil {
 		return "", err
@@ -93,14 +109,18 @@ func ensure() (string, error) {
 	if runtime.GOOS == "windows" {
 		ext = ".exe"
 	}
-	bin := filepath.Join("bin", "tailwindcss-"+version+ext)
+	bin := filepath.Join("bin", "tailwindcss-"+v+ext)
 	if _, err := os.Stat(bin); err == nil {
 		return bin, nil
 	}
 
-	url := fmt.Sprintf("https://github.com/tailwindlabs/tailwindcss/releases/download/%s/%s", version, asset)
+	sum, err := checksum(v, asset)
+	if err != nil {
+		return "", err
+	}
+	url := fmt.Sprintf("%s/download/%s/%s", releases, v, asset)
 	fmt.Fprintf(os.Stderr, "tailwind: downloading %s\n", url)
-	if err := download(url, bin, checksums[asset]); err != nil {
+	if err := download(url, bin, sum); err != nil {
 		return "", err
 	}
 	return bin, nil
@@ -140,11 +160,11 @@ func assetName() (string, error) {
 	return name, nil
 }
 
-// warnVersion reports when a tailwindcss found on PATH isn't the pinned version.
-func warnVersion(bin string) {
+// warnVersion reports when a tailwindcss found on PATH isn't version v.
+func warnVersion(bin, v string) {
 	out, _ := exec.Command(bin, "--help").CombinedOutput()
-	if !strings.Contains(string(out), "tailwindcss "+version) {
-		fmt.Fprintf(os.Stderr, "tailwind: using %s, which is not the pinned %s; output may differ\n", bin, version)
+	if !strings.Contains(string(out), "tailwindcss "+v) {
+		fmt.Fprintf(os.Stderr, "tailwind: using %s, which is not the pinned %s; output may differ\n", bin, v)
 	}
 }
 
