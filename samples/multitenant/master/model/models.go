@@ -7,7 +7,6 @@ package model
 type Company struct {
 	ID        int64
 	Slug      string
-	DbKey     string
 	Name      string
 	CreatedAt int64
 }

@@ -9,46 +9,39 @@ import (
 	"context"
 )
 
+const companyExists = `-- name: CompanyExists :one
+select exists (select 1 from company where slug = ?)
+`
+
+func (q *Queries) CompanyExists(ctx context.Context, slug string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, companyExists, slug)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const createCompany = `-- name: CreateCompany :one
-insert into company (slug, db_key, name, created_at)
-values (?, ?, ?, ?)
-returning id, slug, db_key, name, created_at
+insert into company (slug, name, created_at)
+values (?, ?, ?)
+returning id, slug, name, created_at
 `
 
 type CreateCompanyParams struct {
 	Slug      string
-	DbKey     string
 	Name      string
 	CreatedAt int64
 }
 
 func (q *Queries) CreateCompany(ctx context.Context, arg CreateCompanyParams) (Company, error) {
-	row := q.db.QueryRowContext(ctx, createCompany,
-		arg.Slug,
-		arg.DbKey,
-		arg.Name,
-		arg.CreatedAt,
-	)
+	row := q.db.QueryRowContext(ctx, createCompany, arg.Slug, arg.Name, arg.CreatedAt)
 	var i Company
 	err := row.Scan(
 		&i.ID,
 		&i.Slug,
-		&i.DbKey,
 		&i.Name,
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const dBKeyTaken = `-- name: DBKeyTaken :one
-select exists (select 1 from company where db_key = ?)
-`
-
-func (q *Queries) DBKeyTaken(ctx context.Context, dbKey string) (bool, error) {
-	row := q.db.QueryRowContext(ctx, dBKeyTaken, dbKey)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
 }
 
 const deleteCompany = `-- name: DeleteCompany :execrows
@@ -65,7 +58,7 @@ func (q *Queries) DeleteCompany(ctx context.Context, id int64) (int64, error) {
 }
 
 const getCompany = `-- name: GetCompany :one
-select id, slug, db_key, name, created_at
+select id, slug, name, created_at
 from company
 where id = ?
 `
@@ -76,26 +69,6 @@ func (q *Queries) GetCompany(ctx context.Context, id int64) (Company, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.Slug,
-		&i.DbKey,
-		&i.Name,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const getCompanyByDBKey = `-- name: GetCompanyByDBKey :one
-select id, slug, db_key, name, created_at
-from company
-where db_key = ?
-`
-
-func (q *Queries) GetCompanyByDBKey(ctx context.Context, dbKey string) (Company, error) {
-	row := q.db.QueryRowContext(ctx, getCompanyByDBKey, dbKey)
-	var i Company
-	err := row.Scan(
-		&i.ID,
-		&i.Slug,
-		&i.DbKey,
 		&i.Name,
 		&i.CreatedAt,
 	)
@@ -103,7 +76,7 @@ func (q *Queries) GetCompanyByDBKey(ctx context.Context, dbKey string) (Company,
 }
 
 const getCompanyBySlug = `-- name: GetCompanyBySlug :one
-select id, slug, db_key, name, created_at
+select id, slug, name, created_at
 from company
 where slug = ?
 `
@@ -114,7 +87,6 @@ func (q *Queries) GetCompanyBySlug(ctx context.Context, slug string) (Company, e
 	err := row.Scan(
 		&i.ID,
 		&i.Slug,
-		&i.DbKey,
 		&i.Name,
 		&i.CreatedAt,
 	)
@@ -122,7 +94,7 @@ func (q *Queries) GetCompanyBySlug(ctx context.Context, slug string) (Company, e
 }
 
 const listCompanies = `-- name: ListCompanies :many
-select id, slug, db_key, name, created_at
+select id, slug, name, created_at
 from company
 order by slug
 `
@@ -139,7 +111,6 @@ func (q *Queries) ListCompanies(ctx context.Context) ([]Company, error) {
 		if err := rows.Scan(
 			&i.ID,
 			&i.Slug,
-			&i.DbKey,
 			&i.Name,
 			&i.CreatedAt,
 		); err != nil {
@@ -156,30 +127,11 @@ func (q *Queries) ListCompanies(ctx context.Context) ([]Company, error) {
 	return items, nil
 }
 
-const renameDBKey = `-- name: RenameDBKey :execrows
-update company
-set db_key = ?1
-where db_key = ?2
-`
-
-type RenameDBKeyParams struct {
-	NewDbKey string
-	DbKey    string
-}
-
-func (q *Queries) RenameDBKey(ctx context.Context, arg RenameDBKeyParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, renameDBKey, arg.NewDbKey, arg.DbKey)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const updateCompany = `-- name: UpdateCompany :one
 update company
 set name = ?
 where slug = ?
-returning id, slug, db_key, name, created_at
+returning id, slug, name, created_at
 `
 
 type UpdateCompanyParams struct {
@@ -193,18 +145,16 @@ func (q *Queries) UpdateCompany(ctx context.Context, arg UpdateCompanyParams) (C
 	err := row.Scan(
 		&i.ID,
 		&i.Slug,
-		&i.DbKey,
 		&i.Name,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
-const updateSlug = `-- name: UpdateSlug :one
+const updateSlug = `-- name: UpdateSlug :execrows
 update company
 set slug = ?1
 where slug = ?2
-returning id, slug, db_key, name, created_at
 `
 
 type UpdateSlugParams struct {
@@ -212,15 +162,10 @@ type UpdateSlugParams struct {
 	Slug    string
 }
 
-func (q *Queries) UpdateSlug(ctx context.Context, arg UpdateSlugParams) (Company, error) {
-	row := q.db.QueryRowContext(ctx, updateSlug, arg.NewSlug, arg.Slug)
-	var i Company
-	err := row.Scan(
-		&i.ID,
-		&i.Slug,
-		&i.DbKey,
-		&i.Name,
-		&i.CreatedAt,
-	)
-	return i, err
+func (q *Queries) UpdateSlug(ctx context.Context, arg UpdateSlugParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateSlug, arg.NewSlug, arg.Slug)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

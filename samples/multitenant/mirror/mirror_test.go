@@ -26,11 +26,11 @@ func TestCompany(t *testing.T) {
 	defer dbs.Close()
 
 	q := mastermodel.New(master)
-	mt, err := q.CreateCompany(t.Context(), mastermodel.CreateCompanyParams{Slug: "acme", DbKey: "acme", Name: "Acme", CreatedAt: 1})
+	mt, err := q.CreateCompany(t.Context(), mastermodel.CreateCompanyParams{Slug: "acme", Name: "Acme", CreatedAt: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	id := mt.DbKey
+	id := mt.Slug
 	if err := dbs.Create(t.Context(), id); err != nil {
 		t.Fatal(err)
 	}

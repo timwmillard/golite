@@ -38,9 +38,10 @@ type Company struct {
 type CreateCompanyRequest struct {
 	Name string `json:"name"`
 
-	// Slug URL-safe key used in /v1/companies/{company}, and in the name of
-	// the company's database file, which keeps that name if the slug
-	// changes. Lowercase letters, digits and '-'.
+	// Slug URL-safe key used in /v1/companies/{company}, and the name of
+	// the company's database file, company_<slug>.db, so task requests
+	// go straight to it without reading the master database. It can
+	// only be changed offline. Lowercase letters, digits and '-'.
 	Slug string `json:"slug"`
 }
 
@@ -72,11 +73,6 @@ type Task struct {
 // UpdateCompanyRequest defines model for UpdateCompanyRequest.
 type UpdateCompanyRequest struct {
 	Name string `json:"name"`
-}
-
-// UpdateSlugRequest defines model for UpdateSlugRequest.
-type UpdateSlugRequest struct {
-	Slug string `json:"slug"`
 }
 
 // UpdateTaskRequest defines model for UpdateTaskRequest.
@@ -115,9 +111,6 @@ type CreateCompanyJSONRequestBody = CreateCompanyRequest
 // UpdateCompanyJSONRequestBody defines body for UpdateCompany for application/json ContentType.
 type UpdateCompanyJSONRequestBody = UpdateCompanyRequest
 
-// UpdateSlugJSONRequestBody defines body for UpdateSlug for application/json ContentType.
-type UpdateSlugJSONRequestBody = UpdateSlugRequest
-
 // CreateTaskJSONRequestBody defines body for CreateTask for application/json ContentType.
 type CreateTaskJSONRequestBody = CreateTaskRequest
 
@@ -141,9 +134,6 @@ type ServerInterface interface {
 	// UpdateCompany Update a company
 	// (PATCH /v1/companies/{company})
 	UpdateCompany(w http.ResponseWriter, r *http.Request, company CompanySlug)
-	// UpdateSlug Change a company's slug
-	// (PUT /v1/companies/{company}/slug)
-	UpdateSlug(w http.ResponseWriter, r *http.Request, company CompanySlug)
 	// ListTasks List tasks
 	// (GET /v1/companies/{company}/tasks)
 	ListTasks(w http.ResponseWriter, r *http.Request, company CompanySlug, params ListTasksParams)
@@ -267,32 +257,6 @@ func (siw *ServerInterfaceWrapper) UpdateCompany(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateCompany(w, r, company)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// UpdateSlug operation middleware
-func (siw *ServerInterfaceWrapper) UpdateSlug(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "company" -------------
-	var company CompanySlug
-
-	err = runtime.BindStyledParameterWithOptions("simple", "company", r.PathValue("company"), &company, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "company", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.UpdateSlug(w, r, company)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -600,7 +564,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/companies/{company}", wrapper.DeleteCompany)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/companies/{company}", wrapper.GetCompany)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/v1/companies/{company}", wrapper.UpdateCompany)
-	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/v1/companies/{company}/slug", wrapper.UpdateSlug)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/companies/{company}/tasks", wrapper.ListTasks)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/companies/{company}/tasks", wrapper.CreateTask)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/companies/{company}/tasks/{id}", wrapper.DeleteTask)
@@ -814,71 +777,6 @@ func (response UpdateCompany404JSONResponse) VisitUpdateCompanyResponse(w http.R
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type UpdateSlugRequestObject struct {
-	Company CompanySlug `json:"company"`
-	Body    *UpdateSlugJSONRequestBody
-}
-
-type UpdateSlugResponseObject interface {
-	VisitUpdateSlugResponse(w http.ResponseWriter) error
-}
-
-type UpdateSlug200JSONResponse Company
-
-func (response UpdateSlug200JSONResponse) VisitUpdateSlugResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type UpdateSlug400JSONResponse struct{ BadRequestJSONResponse }
-
-func (response UpdateSlug400JSONResponse) VisitUpdateSlugResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(400)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type UpdateSlug404JSONResponse struct{ NotFoundJSONResponse }
-
-func (response UpdateSlug404JSONResponse) VisitUpdateSlugResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(404)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type UpdateSlug409JSONResponse struct{ ConflictJSONResponse }
-
-func (response UpdateSlug409JSONResponse) VisitUpdateSlugResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(409)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -1108,9 +1006,6 @@ type StrictServerInterface interface {
 	// UpdateCompany Update a company
 	// (PATCH /v1/companies/{company})
 	UpdateCompany(ctx context.Context, request UpdateCompanyRequestObject) (UpdateCompanyResponseObject, error)
-	// UpdateSlug Change a company's slug
-	// (PUT /v1/companies/{company}/slug)
-	UpdateSlug(ctx context.Context, request UpdateSlugRequestObject) (UpdateSlugResponseObject, error)
 	// ListTasks List tasks
 	// (GET /v1/companies/{company}/tasks)
 	ListTasks(ctx context.Context, request ListTasksRequestObject) (ListTasksResponseObject, error)
@@ -1307,39 +1202,6 @@ func (sh *strictHandler) UpdateCompany(w http.ResponseWriter, r *http.Request, c
 	}
 }
 
-// UpdateSlug operation middleware
-func (sh *strictHandler) UpdateSlug(w http.ResponseWriter, r *http.Request, company CompanySlug) {
-	var request UpdateSlugRequestObject
-
-	request.Company = company
-
-	var body UpdateSlugJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.UpdateSlug(ctx, request.(UpdateSlugRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "UpdateSlug")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(UpdateSlugResponseObject); ok {
-		if err := validResponse.VisitUpdateSlugResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
 // ListTasks operation middleware
 func (sh *strictHandler) ListTasks(w http.ResponseWriter, r *http.Request, company CompanySlug, params ListTasksParams) {
 	var request ListTasksRequestObject
@@ -1493,33 +1355,32 @@ func (sh *strictHandler) UpdateTask(w http.ResponseWriter, r *http.Request, comp
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"zSejUUrfE2Xs5LdXr8ZsfbH+LwAA//8=",
+	"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",
+	"45kydvbbq1dTtjxb/hcAAP//",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

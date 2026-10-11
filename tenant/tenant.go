@@ -7,8 +7,10 @@
 //
 // Each tenant's database is <Config.Name>_<id>.db in Config.Dir, such as
 // company_acme.db or firm_e505a392-54f0-434a-a253-df54e17f8c38.db. The id
-// is the app's choice of a unique value that never changes, such as a UUID
-// or a slug fixed when the tenant was created, so the folder is readable
+// is the app's choice of a unique value that never changes while the app
+// runs, such as a UUID or a slug, and is the one in the tenant's URLs: so a
+// request goes straight to its database, without reading the master
+// database, and tenants don't wait on each other. The folder is readable
 // and can be replicated as is (e.g. by Litestream). A tenant can be renamed
 // with Rename, but only offline.
 //
@@ -19,8 +21,10 @@
 //	defer dbs.Close()
 //
 //	// Requests: put the tenant's *sql.DB in the context for tenant.DB.
+//	// The id comes straight from the URL, so requests never touch the
+//	// master database.
 //	mw := dbs.Middleware(func(r *http.Request) (string, error) {
-//		return lookupTenantID(r) // e.g. from r.PathValue("tenant")
+//		return r.PathValue("tenant"), nil
 //	})
 //
 //	// When a tenant is added.

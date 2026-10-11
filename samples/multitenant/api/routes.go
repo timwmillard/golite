@@ -3,8 +3,6 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -12,8 +10,6 @@ import (
 
 	"github.com/timwmillard/golite/server"
 	"github.com/timwmillard/golite/tenant"
-
-	"github.com/timwmillard/golite/samples/multitenant/master/model"
 )
 
 // handlers implements StrictServerInterface: company operations on the master
@@ -37,32 +33,33 @@ func Register(mux *http.ServeMux, master *sql.DB, dbs *tenant.DBs, riverClient *
 	HandlerWithOptions(h, StdHTTPServerOptions{
 		BaseRouter:       mux,
 		ErrorHandlerFunc: server.RequestError,
-		Middlewares:      []MiddlewareFunc{dbs.Middleware(resolveCompany(master))},
+		Middlewares:      []MiddlewareFunc{dbs.Middleware(resolveCompany())},
 	})
 
 	mux.HandleFunc("GET /openapi.json", serveSpec)
 }
 
-// resolveCompany maps the {company} slug in the path to the company's
-// database id, its db_key: the slug it was created with. Only the task routes
-// use the company's database; the others with {company} only touch the
-// master database. This is where an app would also check the caller may
-// access the company.
-func resolveCompany(master *sql.DB) tenant.Resolver {
-	q := model.New(master)
+// resolveCompany returns the {company} slug in the path as the company's
+// database id, without reading the master database: the database is
+// company_<slug>.db, and tenant.Middleware answers 404 if there's no such
+// file, which includes a company being deleted. So requests for one
+// company never wait on master, or on each other. Only the task routes use
+// the company's database; the others with {company} only touch the master
+// database.
+//
+// This is where an app would also check the caller may use the company,
+// again without master: say from a signed session naming the caller's
+// companies, or a users table in the company's own database.
+func resolveCompany() tenant.Resolver {
 	return func(r *http.Request) (string, error) {
 		if !strings.Contains(r.Pattern, "/v1/companies/{company}/tasks") {
 			return "", nil
 		}
-
-		c, err := q.GetCompanyBySlug(r.Context(), r.PathValue("company"))
-		if errors.Is(err, sql.ErrNoRows) {
+		slug := r.PathValue("company")
+		if !validSlug.MatchString(slug) {
 			return "", tenant.ErrNotFound
 		}
-		if err != nil {
-			return "", fmt.Errorf("resolve company: %w", err)
-		}
-		return c.DbKey, nil
+		return slug, nil
 	}
 }
 

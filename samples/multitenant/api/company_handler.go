@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -22,9 +21,8 @@ import (
 
 // CompanyHandler implements the company operations of StrictServerInterface
 // against the master database. Each company's database is
-// company_<db_key>.db, where db_key is the slug it was created with and
-// never changes; changes reach the database through tenant.Sync jobs,
-// inserted in the same transaction as the change.
+// company_<slug>.db; changes reach it through tenant.Sync jobs, inserted in
+// the same transaction as the change.
 type CompanyHandler struct {
 	master *sql.DB
 	q      *model.Queries
@@ -77,24 +75,19 @@ func (h *CompanyHandler) CreateCompany(ctx context.Context, request CreateCompan
 
 	var c model.Company
 	err := h.inTx(ctx, func(tx *sql.Tx) error {
-		q := h.q.WithTx(tx)
-		dbKey, err := freeDBKey(ctx, q, body.Slug)
-		if err != nil {
-			return err
-		}
-		c, err = q.CreateCompany(ctx, model.CreateCompanyParams{
+		var err error
+		c, err = h.q.WithTx(tx).CreateCompany(ctx, model.CreateCompanyParams{
 			Slug:      body.Slug,
-			DbKey:     dbKey,
 			Name:      name,
 			CreatedAt: time.Now().Unix(),
 		})
 		if err != nil {
 			return err
 		}
-		if err := tenant.CreateTx(ctx, h.river, tx, c.DbKey); err != nil {
+		if err := tenant.CreateTx(ctx, h.river, tx, c.Slug); err != nil {
 			return err
 		}
-		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, c.DbKey, "")
+		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, c.Slug, "")
 	})
 	if isUnique(err) {
 		return CreateCompany409JSONResponse{ConflictJSONResponse{Error: "company already exists"}}, nil
@@ -105,7 +98,7 @@ func (h *CompanyHandler) CreateCompany(ctx context.Context, request CreateCompan
 
 	// Create the database now rather than waiting for the tenant_create
 	// job, which retries if this fails.
-	if err := h.dbs.Create(ctx, c.DbKey); err != nil {
+	if err := h.dbs.Create(ctx, c.Slug); err != nil {
 		slog.WarnContext(ctx, "Creating company database failed; left to tenant_create", "company", c.Slug, "err", err)
 	}
 	return CreateCompany201JSONResponse(toAPICompany(c)), nil
@@ -136,7 +129,7 @@ func (h *CompanyHandler) UpdateCompany(ctx context.Context, request UpdateCompan
 		if err != nil {
 			return err
 		}
-		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, c.DbKey, "")
+		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, c.Slug, "")
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return UpdateCompany404JSONResponse{h.notFound}, nil
@@ -146,35 +139,6 @@ func (h *CompanyHandler) UpdateCompany(ctx context.Context, request UpdateCompan
 	}
 
 	return UpdateCompany200JSONResponse(toAPICompany(c)), nil
-}
-
-// UpdateSlug changes a company's slug. Its database keeps its name, from
-// db_key, so nothing moves.
-func (h *CompanyHandler) UpdateSlug(ctx context.Context, request UpdateSlugRequestObject) (UpdateSlugResponseObject, error) {
-	slug := request.Body.Slug
-	if !validSlug.MatchString(slug) {
-		return UpdateSlug400JSONResponse{BadRequestJSONResponse{Error: badSlug}}, nil
-	}
-
-	var c model.Company
-	err := h.inTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		c, err = h.q.WithTx(tx).UpdateSlug(ctx, model.UpdateSlugParams{Slug: request.Company, NewSlug: slug})
-		if err != nil {
-			return err
-		}
-		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, c.DbKey, "")
-	})
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		return UpdateSlug404JSONResponse{h.notFound}, nil
-	case isUnique(err):
-		return UpdateSlug409JSONResponse{ConflictJSONResponse{Error: "slug is taken"}}, nil
-	case err != nil:
-		return nil, fmt.Errorf("update slug: %w", err)
-	}
-
-	return UpdateSlug200JSONResponse(toAPICompany(c)), nil
 }
 
 func (h *CompanyHandler) DeleteCompany(ctx context.Context, request DeleteCompanyRequestObject) (DeleteCompanyResponseObject, error) {
@@ -188,10 +152,10 @@ func (h *CompanyHandler) DeleteCompany(ctx context.Context, request DeleteCompan
 
 	// Move the database to the trash, once requests in flight on it
 	// finish, then delete the master row. In that order, a new company
-	// can't be given the db_key while the old database is still under it.
+	// can't be given the slug while the old database is still under it.
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	err = h.dbs.Delete(ctx, c.DbKey, func(ctx context.Context) error {
+	err = h.dbs.Delete(ctx, c.Slug, func(ctx context.Context) error {
 		n, err := h.q.DeleteCompany(ctx, c.ID)
 		if err == nil && n == 0 {
 			err = sql.ErrNoRows // deleted meanwhile
@@ -208,26 +172,6 @@ func (h *CompanyHandler) DeleteCompany(ctx context.Context, request DeleteCompan
 	}
 
 	return DeleteCompany204Response{}, nil
-}
-
-// freeDBKey returns the db_key for a new company with slug: the slug,
-// unless a company that has since changed its slug still has it as its
-// db_key, in which case slug-2, slug-3 and so on.
-func freeDBKey(ctx context.Context, q *model.Queries, slug string) (string, error) {
-	for n := 1; ; n++ {
-		key := slug
-		if n > 1 {
-			suffix := "-" + strconv.Itoa(n)
-			key = slug[:min(len(slug), 64-len(suffix))] + suffix
-		}
-		taken, err := q.DBKeyTaken(ctx, key)
-		if err != nil {
-			return "", fmt.Errorf("check db_key: %w", err)
-		}
-		if !taken {
-			return key, nil
-		}
-	}
 }
 
 // inTx runs fn in a master database transaction, committing if it returns
