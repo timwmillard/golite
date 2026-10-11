@@ -15,16 +15,16 @@ import (
 var ErrNotFound = errors.New("tenant not found")
 
 // Resolver returns the ID of the tenant r is for, or "" if r isn't for a
-// tenant (e.g. a route on the master database). It's where the app checks,
-// if it has auth, that the caller may use the tenant.
+// tenant (e.g. a route on the master database). It can also be where the
+// app checks, if it has auth, that the caller may use the tenant; where
+// users and sessions live (master, or the tenant's database) is up to the
+// app.
 //
-// Make it a function of the request alone, such as the {tenant} path
-// value, and leave checking the tenant exists to Middleware, which answers
-// 404 if its database file doesn't. A Resolver that reads the master
-// database makes every tenant's requests queue on master's one connection,
-// behind its writes, which is what separate databases are there to avoid.
-// Check auth the same way: from a signed session or token, or a table in
-// the tenant's own database.
+// Take the ID from the request itself, such as the {tenant} path value,
+// and leave checking the tenant exists to Middleware, which answers 404 if
+// its database file doesn't. Don't read the master database just to find
+// the ID: every tenant's requests would queue on it, which is what separate
+// databases are there to avoid.
 type Resolver func(r *http.Request) (string, error)
 
 // Middleware resolves each request's tenant and puts its ID and database in

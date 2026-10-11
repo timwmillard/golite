@@ -47,9 +47,9 @@ func Register(mux *http.ServeMux, master *sql.DB, dbs *tenant.DBs, riverClient *
 // the company's database; the others with {company} only touch the master
 // database.
 //
-// This is where an app would also check the caller may use the company,
-// again without master: say from a signed session naming the caller's
-// companies, or a users table in the company's own database.
+// This is also where an app could check the caller may use the company,
+// against wherever its users live: master for a global login that spans
+// companies, or the company's own database for users tied to one.
 func resolveCompany() tenant.Resolver {
 	return func(r *http.Request) (string, error) {
 		if !strings.Contains(r.Pattern, "/v1/companies/{company}/tasks") {
