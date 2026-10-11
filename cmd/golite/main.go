@@ -88,7 +88,7 @@ func run(args []string) error {
 	var files []file
 	var err error
 	if *from != "" {
-		files, err = readLocal(filepath.Join(*from, "samples"))
+		files, err = readLocal(*from)
 	} else {
 		fmt.Printf("Downloading samples from %s@%s\n", repo, *ref)
 		files, err = download(*ref)
@@ -281,37 +281,32 @@ func download(ref string) ([]file, error) {
 	}
 }
 
-// readLocal returns the files under dir, skipping data directories and
-// dotfiles other than .gitignore.
-func readLocal(dir string) ([]file, error) {
+// readLocal returns the files under samples/ in the golite checkout at
+// root that git would commit: tracked, or untracked but not ignored.
+func readLocal(root string) ([]file, error) {
+	out, err := exec.Command("git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "samples").Output()
+	if err != nil {
+		return nil, fmt.Errorf("listing samples in %s: %w", root, err)
+	}
 	var files []file
-	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	for p := range strings.SplitSeq(strings.TrimSuffix(string(out), "\x00"), "\x00") {
+		info, err := os.Lstat(filepath.Join(root, p))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // deleted but not yet committed
+		}
 		if err != nil {
-			return err
+			return nil, err
 		}
-		rel, _ := filepath.Rel(dir, p)
-		name := d.Name()
-		if rel != "." && (name == "data" || name == "tmp" || strings.HasPrefix(name, ".") && name != ".gitignore") {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
+		if !info.Mode().IsRegular() {
+			continue
 		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
-		info, err := d.Info()
+		data, err := os.ReadFile(filepath.Join(root, p))
 		if err != nil {
-			return err
+			return nil, err
 		}
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		files = append(files, file{filepath.ToSlash(rel), info.Mode(), data})
-		return nil
-	})
-	return files, err
+		files = append(files, file{strings.TrimPrefix(p, "samples/"), info.Mode(), data})
+	}
+	return files, nil
 }
 
 // discover groups files into samples, one per directory under samples/

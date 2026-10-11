@@ -9,7 +9,7 @@ import (
 // TestSamples checks every sample has a description and a command, and is
 // listed in the README.
 func TestSamples(t *testing.T) {
-	files, err := readLocal("../../samples")
+	files, err := readLocal("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
