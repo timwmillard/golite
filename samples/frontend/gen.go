@@ -10,5 +10,6 @@ package frontend
 // Generate Components
 //go:generate go tool templ generate -path app
 
-// Generate CSS (downloads tailwindcss into ./bin on first run)
+// Generate CSS (downloads tailwindcss into ./bin on first run; pass
+// -version vX.Y.Z first for a release other than golite's pinned one)
 //go:generate go tool tailwind -i app/styles.css -o app/static/styles.css --minify
