@@ -65,18 +65,30 @@ func Apply(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 	return nil
 }
 
+// Pragmas returns the contents of fsys's pragmasFile, or "" if it has none.
+// Since pragmas like foreign_keys and busy_timeout are per connection, a
+// caller with a connection pool should run them on every new connection, as
+// server.OpenDB does; Apply only runs them on the one connection it gets.
+func Pragmas(fsys fs.FS) (string, error) {
+	contents, err := fs.ReadFile(fsys, pragmasFile)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", pragmasFile, err)
+	}
+	return string(contents), nil
+}
+
 // applyPragmas execs pragmasFile's contents, if present, outside of any
 // transaction. It's a no-op if fsys doesn't have the file.
 func applyPragmas(ctx context.Context, db *sql.DB, fsys fs.FS) error {
-	contents, err := fs.ReadFile(fsys, pragmasFile)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read %s: %w", pragmasFile, err)
+	pragmas, err := Pragmas(fsys)
+	if err != nil || pragmas == "" {
+		return err
 	}
 
-	if _, err := db.ExecContext(ctx, string(contents)); err != nil {
+	if _, err := db.ExecContext(ctx, pragmas); err != nil {
 		return fmt.Errorf("apply %s: %w", pragmasFile, err)
 	}
 

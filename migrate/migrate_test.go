@@ -164,3 +164,15 @@ func TestApply_SetsJournalModeWAL(t *testing.T) {
 		t.Errorf("journal_mode = %q, want %q", mode, "wal")
 	}
 }
+
+func TestPragmas(t *testing.T) {
+	got, err := Pragmas(fstest.MapFS{"pragmas.sql": {Data: []byte(`pragma foreign_keys = on;`)}})
+	if err != nil || got != `pragma foreign_keys = on;` {
+		t.Errorf("Pragmas = %q, %v; want the file's contents", got, err)
+	}
+
+	got, err = Pragmas(fstest.MapFS{"0001_init.sql": {Data: []byte(`select 1`)}})
+	if err != nil || got != "" {
+		t.Errorf("Pragmas without pragmas.sql = %q, %v; want \"\", nil", got, err)
+	}
+}
