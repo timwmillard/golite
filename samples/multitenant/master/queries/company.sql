@@ -13,9 +13,17 @@ select *
 from company
 where slug = ?;
 
+-- name: GetCompanyByDBKey :one
+select *
+from company
+where db_key = ?;
+
+-- name: DBKeyTaken :one
+select exists (select 1 from company where db_key = ?);
+
 -- name: CreateCompany :one
-insert into company (slug, name, created_at)
-values (?, ?, ?)
+insert into company (slug, db_key, name, created_at)
+values (?, ?, ?, ?)
 returning *;
 
 -- name: UpdateCompany :one
@@ -24,13 +32,17 @@ set name = ?
 where slug = ?
 returning *;
 
--- name: DeleteCompany :one
+-- name: DeleteCompany :execrows
 delete from company
-where slug = ?
-returning *;
+where id = ?;
 
 -- name: UpdateSlug :one
 update company
 set slug = sqlc.arg(new_slug)
 where slug = sqlc.arg(slug)
 returning *;
+
+-- name: RenameDBKey :execrows
+update company
+set db_key = sqlc.arg(new_db_key)
+where db_key = sqlc.arg(db_key);

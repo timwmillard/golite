@@ -23,9 +23,7 @@ type Resolver func(r *http.Request) (string, error)
 // the request context, for ID and DB, holding the database open until the
 // handler returns. Requests the Resolver returns "" for
 // pass through untouched. A Resolver error of ErrNotFound, or a tenant
-// whose database doesn't exist or is being deleted, is a 404; one being
-// renamed is a 503 with Retry-After: 1. If the database doesn't exist the
-// request is resolved again, in case a rename has just moved it. Any other
+// whose database doesn't exist or is being deleted, is a 404. Any other
 // error, or failing to open the database, is a 500 via
 // server.ResponseError.
 //
@@ -34,7 +32,6 @@ type Resolver func(r *http.Request) (string, error)
 // Resolver can read path parameters with r.PathValue.
 func (d *DBs) Middleware(resolve Resolver) func(http.Handler) http.Handler {
 	notFound := d.cfg.Name + " not found"
-	renaming := d.cfg.Name + " is being renamed; try again"
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id, err := resolve(r)
@@ -52,21 +49,9 @@ func (d *DBs) Middleware(resolve Resolver) func(http.Handler) http.Handler {
 			}
 
 			db, release, err := d.Acquire(r.Context(), id)
-			if errors.Is(err, ErrNotExist) {
-				// A rename may have moved it between resolving and
-				// opening: resolve again.
-				if id2, err2 := resolve(r); err2 == nil && id2 != "" && id2 != id {
-					id = id2
-					db, release, err = d.Acquire(r.Context(), id)
-				}
-			}
 			switch {
 			case errors.Is(err, ErrNotExist), errors.Is(err, ErrDeleting):
 				server.WriteError(w, http.StatusNotFound, notFound)
-				return
-			case errors.Is(err, ErrRenaming):
-				w.Header().Set("Retry-After", "1")
-				server.WriteError(w, http.StatusServiceUnavailable, renaming)
 				return
 			case err != nil:
 				server.ResponseError(w, r, err)

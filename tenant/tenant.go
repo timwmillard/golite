@@ -5,6 +5,13 @@
 // handle. Which tenants exist is the app's concern (typically a table in a
 // master database); this package only manages their files.
 //
+// Each tenant's database is <Config.Name>_<id>.db in Config.Dir, such as
+// company_acme.db or firm_e505a392-54f0-434a-a253-df54e17f8c38.db. The id
+// is the app's choice of a unique value that never changes, such as a UUID
+// or a slug fixed when the tenant was created, so the folder is readable
+// and can be replicated as is (e.g. by Litestream). A tenant can be renamed
+// with Rename, but only offline.
+//
 //	dbs := tenant.New(tenant.Config{
 //		Dir:        filepath.Join(dataDir, "tenants"),
 //		Migrations: tenantmigrations.FS,
@@ -18,6 +25,11 @@
 //
 //	// When a tenant is added.
 //	err := dbs.Create(ctx, id)
+//
+//	// When it's removed: move its files to the trash, then commit.
+//	err := dbs.Delete(ctx, id, func(ctx context.Context) error {
+//		return deleteTenantRow(ctx, id)
+//	})
 //
 //	// Jobs and scripts: use the database for the length of fn.
 //	err := dbs.Do(ctx, id, func(db *sql.DB) error { ... })
@@ -37,6 +49,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,8 +65,8 @@ type Config struct {
 	// only hold letters, digits, '-' and '_'.
 	Name string
 
-	// Dir holds the tenant databases, as <Name>_<id>.db. It's created if
-	// needed.
+	// Dir holds the tenant databases, as <Name>_<id>.db, and deleted ones
+	// in its .trash subdirectory (see Delete). It's created if needed.
 	Dir string
 
 	// Migrations, if set, are applied (see package migrate) each time a
@@ -85,6 +98,9 @@ var ErrNotExist = errors.New("tenant: database does not exist")
 // ErrExists is returned by Rename when the new id's database already exists.
 var ErrExists = errors.New("tenant: database already exists")
 
+// ErrInUse is returned by Rename when either database is in use.
+var ErrInUse = errors.New("tenant: database is in use")
+
 // ErrRenaming is returned by Acquire while the tenant's database is being
 // renamed.
 var ErrRenaming = errors.New("tenant: database is being renamed")
@@ -94,6 +110,13 @@ var ErrDeleting = errors.New("tenant: database is being deleted")
 
 // validID is what an ID must look like to be used in a file name.
 var validID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// trashDir is the subdirectory of Config.Dir that Delete moves databases
+// into.
+const trashDir = ".trash"
+
+// trashStamp prefixes a trashed file's name with when it was deleted.
+const trashStamp = "20060102T150405.000000000Z"
 
 // DBs opens, caches and closes one database per tenant ID.
 type DBs struct {
@@ -185,6 +208,29 @@ func (d *DBs) Path(id string) (string, error) {
 	return filepath.Join(d.cfg.Dir, d.cfg.Name+"_"+id+".db"), nil
 }
 
+// List returns the ids of the tenant databases in Dir, sorted. A missing
+// Dir has none.
+func (d *DBs) List() ([]string, error) {
+	files, err := os.ReadDir(d.cfg.Dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list tenant databases: %w", err)
+	}
+	var ids []string
+	for _, f := range files {
+		id, ok := strings.CutPrefix(f.Name(), d.cfg.Name+"_")
+		if !ok || f.IsDir() {
+			continue
+		}
+		if id, ok = strings.CutSuffix(id, ".db"); ok && validID.MatchString(id) {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
 // Acquire returns tenant id's database, opening and migrating it if
 // needed, and a release func to call when done with it. The database won't
 // be closed before release is called, so call it, and don't use the
@@ -201,7 +247,9 @@ func (d *DBs) Acquire(ctx context.Context, id string) (db *sql.DB, release func(
 }
 
 // Create creates tenant id's database, if it doesn't exist, and migrates
-// it. It leaves the database open but idle.
+// it. It leaves the database open but idle. Only Create makes database
+// files: Acquire, Do, Middleware and MigrateAll all fail with ErrNotExist
+// if it hasn't been called.
 func (d *DBs) Create(ctx context.Context, id string) error {
 	_, release, err := d.acquire(ctx, id, modeCreate)
 	if err != nil {
@@ -211,9 +259,8 @@ func (d *DBs) Create(ctx context.Context, id string) error {
 	return nil
 }
 
-// MigrateAll applies pending migrations to each tenant in ids; one whose
-// database doesn't exist is an error (ErrNotExist), not created, so a stale
-// id can't bring back an empty database. Tenants are opened only to be migrated
+// MigrateAll applies pending migrations to every tenant database in Dir.
+// Tenants are opened only to be migrated
 // and closed again, one at a time, so a run over thousands of tenants
 // doesn't push the tenants in actual use out of the open set; tenants
 // already open were migrated when they opened and are skipped.
@@ -225,7 +272,11 @@ func (d *DBs) Create(ctx context.Context, id string) error {
 // later. It keeps going past a tenant that fails, and returns all the
 // failures; it stops early only if ctx is done, after finishing the tenant
 // it's on.
-func (d *DBs) MigrateAll(ctx context.Context, ids []string) error {
+func (d *DBs) MigrateAll(ctx context.Context) error {
+	ids, err := d.List()
+	if err != nil {
+		return err
+	}
 	var errs []error
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
@@ -293,14 +344,25 @@ func (d *DBs) acquire(ctx context.Context, id string, mode mode) (db *sql.DB, re
 	d.mu.Unlock()
 	closeAll(evicted)
 
-	// Delete can't remove the file between this check and the open: it
+	// Delete can't move the file between this check and the open: it
 	// waits for e's users, which include us.
-	if _, err := os.Stat(path); mode != modeCreate && errors.Is(err, fs.ErrNotExist) {
+	_, err = os.Stat(path)
+	missing := errors.Is(err, fs.ErrNotExist)
+	if missing && mode != modeCreate {
 		e.err = ErrNotExist
 	} else {
-		// Detach from ctx so a cancelled request can't leave a
-		// half-applied migration for the Acquires waiting on this open.
-		e.db, e.err = server.OpenDB(context.WithoutCancel(ctx), path, d.cfg.Migrations)
+		if missing {
+			// A -wal or -shm without its database, left by a Delete
+			// that crashed partway, would be applied to the new one:
+			// set it aside.
+			_, e.err = d.trash(path)
+		}
+		if e.err == nil {
+			// Detach from ctx so a cancelled request can't leave a
+			// half-applied migration for the Acquires waiting on this
+			// open.
+			e.db, e.err = server.OpenDB(context.WithoutCancel(ctx), path, d.cfg.Migrations)
+		}
 	}
 	if e.err != nil {
 		// Forget it now, not when the last waiter releases, so the next
@@ -425,11 +487,19 @@ func closeAll(dbs []*sql.DB) {
 	}
 }
 
-// Delete closes tenant id's database and removes its file along with
-// SQLite's -wal and -shm files. If the database is in use it first waits,
-// until ctx is done, for the users to release it; meanwhile Acquire fails
-// with ErrDeleting. Stop routing work to the tenant before deleting it.
-func (d *DBs) Delete(ctx context.Context, id string) error {
+// Delete closes tenant id's database and moves it, with SQLite's -wal and
+// -shm files, into Dir/.trash, where it stays until PurgeTrash removes it.
+// If the database is in use it first waits, until ctx is done, for the
+// users to release it; meanwhile Acquire fails with ErrDeleting. Stop
+// routing work to the tenant before deleting it.
+//
+// commit, if not nil, is called once the files have moved, with id still
+// held, to remove the tenant from the master database; if it fails, the
+// files are moved back. Removing the tenant only once its files are gone
+// means a new tenant given the same id, such as a reused slug, can never
+// open the old one's data. A tenant with no database is still committed,
+// so a Delete that failed partway can simply be run again.
+func (d *DBs) Delete(ctx context.Context, id string, commit func(context.Context) error) error {
 	path, err := d.Path(id)
 	if err != nil {
 		return err
@@ -446,34 +516,120 @@ func (d *DBs) Delete(ctx context.Context, id string) error {
 	if err := d.waitUnused(ctx, e); err != nil {
 		return err
 	}
-
-	err = nil
 	if e.db != nil {
-		if cerr := e.db.Close(); cerr != nil {
-			err = fmt.Errorf("close tenant database %s: %w", path, cerr)
+		if err := e.db.Close(); err != nil {
+			return fmt.Errorf("close tenant database %s: %w", path, err)
 		}
 	}
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if rerr := os.Remove(path + suffix); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
-			err = errors.Join(err, fmt.Errorf("remove tenant database: %w", rerr))
-		}
+
+	// From here on finish what's started even if ctx is cancelled, so the
+	// files and the commit agree.
+	moved, err := d.trash(path)
+	if err == nil && commit != nil {
+		err = commit(context.WithoutCancel(ctx))
 	}
-	return err
+	if err != nil {
+		return errors.Join(err, restore(moved))
+	}
+	return nil
 }
 
-// Rename moves tenant from's database to id to. If the database is in use
-// it first waits, until ctx is done, for the users to release it;
-// meanwhile, and until Rename returns, Acquire of either id fails with
-// ErrRenaming. It fails with ErrExists if to's database exists, and
-// ErrNotExist if from's doesn't.
+// move is a file trash moved, so restore can move it back.
+type move struct{ from, to string }
+
+// trash moves the database at path and its -wal and -shm files, whichever
+// exist, into the trash, under one timestamped name so SQLite still reads
+// them as a database there. It returns what it moved, even if it fails
+// partway.
+func (d *DBs) trash(path string) ([]move, error) {
+	dir := filepath.Join(d.cfg.Dir, trashDir)
+	prefix := time.Now().UTC().Format(trashStamp) + "_"
+	var moved []move
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		from := path + suffix
+		if ok, err := fileExists(from); err != nil {
+			return moved, err
+		} else if !ok {
+			continue
+		}
+		if len(moved) == 0 {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return moved, fmt.Errorf("create tenant trash: %w", err)
+			}
+		}
+		to := filepath.Join(dir, prefix+filepath.Base(from))
+		if err := os.Rename(from, to); err != nil {
+			return moved, fmt.Errorf("move tenant database to trash: %w", err)
+		}
+		moved = append(moved, move{from, to})
+	}
+	if len(moved) == 0 {
+		return nil, nil
+	}
+	// Make the moves durable before anything, such as a commit, relies on
+	// them.
+	return moved, errors.Join(syncDir(filepath.Dir(path)), syncDir(dir))
+}
+
+// restore undoes trash's moves.
+func restore(moved []move) error {
+	var errs []error
+	for _, m := range moved {
+		if err := os.Rename(m.to, m.from); err != nil {
+			errs = append(errs, fmt.Errorf("move tenant database back from trash: %w", err))
+		}
+	}
+	if len(moved) > 0 {
+		errs = append(errs, syncDir(filepath.Dir(moved[0].from)))
+	}
+	return errors.Join(errs...)
+}
+
+// PurgeTrash permanently removes databases that Delete moved to the trash
+// more than age ago. Until then a deleted tenant can be restored by moving
+// its files back from Dir/.trash and dropping the timestamp prefix from
+// their names.
+func (d *DBs) PurgeTrash(age time.Duration) error {
+	dir := filepath.Join(d.cfg.Dir, trashDir)
+	files, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tenant trash: %w", err)
+	}
+	cutoff := time.Now().Add(-age)
+	var errs []error
+	for _, f := range files {
+		stamp, _, ok := strings.Cut(f.Name(), "_")
+		if !ok {
+			continue
+		}
+		deleted, err := time.Parse(trashStamp, stamp)
+		if err != nil || !deleted.Before(cutoff) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, f.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// Rename moves tenant from's database to id to. It's for renaming a tenant
+// offline, with the app stopped, along with anything else that has the
+// database open, such as Litestream: the files must be quiet for the WAL
+// to be checkpointed away, leaving one file to move. It fails with
+// ErrInUse if either database is in use here, ErrExists if to's database
+// exists, and ErrNotExist if from's doesn't.
 //
 // commit, if not nil, is called once the file has moved, still with both
 // ids held, to record the new id (typically in the master database). If it
 // fails the file is moved back, so the file and the record never disagree
 // unless the process dies in between. For that case, if from's database is
 // missing but to's exists, Rename assumes an earlier Rename got as far as
-// moving it and just calls commit again. So only rename to an id reserved
-// for this tenant, as Sync's registry does.
+// moving it and just calls commit again, so running the same rename again
+// finishes it.
 func (d *DBs) Rename(ctx context.Context, from, to string, commit func(context.Context) error) error {
 	fromPath, err := d.Path(from)
 	if err != nil {
@@ -488,42 +644,31 @@ func (d *DBs) Rename(ctx context.Context, from, to string, commit func(context.C
 	}
 
 	d.mu.Lock()
-	if e, ok := d.entries[to]; ok && e.claim == nil {
+	if d.entries == nil {
 		d.mu.Unlock()
-		return ErrExists // it's open, so its file exists
+		return ErrClosed
 	}
-	ef, err := d.claim(from, ErrRenaming)
-	if err != nil {
-		d.mu.Unlock()
-		return err
+	for _, id := range []string{from, to} {
+		if e, ok := d.entries[id]; ok && (e.users > 0 || e.claim != nil) {
+			d.mu.Unlock()
+			return fmt.Errorf("%w: %s %s", ErrInUse, d.cfg.Name, id)
+		}
 	}
-	et, err := d.claim(to, ErrRenaming)
-	if err != nil {
-		evicted := d.unclaim(ef)
-		d.mu.Unlock()
-		closeAll(evicted)
-		return err
-	}
+	// Neither is in use, so neither claim waits or fails.
+	ef, _ := d.claim(from, ErrRenaming)
+	et, _ := d.claim(to, ErrRenaming)
 	d.mu.Unlock()
-
-	if err := d.waitUnused(ctx, ef); err != nil {
-		d.mu.Lock()
-		d.unclaim(et)
-		d.mu.Unlock()
-		return err
-	}
 	defer d.drop(et)
 	defer d.drop(ef)
 
-	if ef.db != nil {
-		if err := ef.db.Close(); err != nil {
-			return fmt.Errorf("close tenant database %s: %w", fromPath, err)
+	for _, e := range []*entry{ef, et} {
+		if e.db != nil {
+			if err := e.db.Close(); err != nil {
+				return fmt.Errorf("close tenant database %s: %w", e.id, err)
+			}
 		}
 	}
-
-	// From here on finish what's started even if ctx is cancelled, so the
-	// file and the commit agree.
-	return renameFile(context.WithoutCancel(ctx), fromPath, toPath, commit)
+	return renameFile(ctx, fromPath, toPath, commit)
 }
 
 // renameFile moves the closed database at from to to, then calls commit,
@@ -589,7 +734,7 @@ func fileExists(path string) (bool, error) {
 // empty, and fails if it isn't.
 func removeEmptySidecars(path string) error {
 	if fi, err := os.Stat(path + "-wal"); err == nil && fi.Size() > 0 {
-		return fmt.Errorf("tenant: %s has a non-empty WAL; is another process using it?", filepath.Base(path))
+		return fmt.Errorf("tenant: %s has a non-empty WAL; is another process, such as the app or Litestream, using it?", filepath.Base(path))
 	}
 	for _, suffix := range []string{"-wal", "-shm"} {
 		if err := os.Remove(path + suffix); err != nil && !errors.Is(err, fs.ErrNotExist) {

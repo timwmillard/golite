@@ -32,7 +32,9 @@ paths:
     post:
       operationId: createCompany
       summary: Create a company
-      description: Creates the company in the master database, and its own database.
+      description: |
+        Creates the company in the master database, and its own database,
+        named after its slug: company_<slug>.db.
       tags:
         - Companies
       requestBody:
@@ -97,8 +99,8 @@ paths:
       operationId: deleteCompany
       summary: Delete a company
       description: |
-        Deletes the company. Its database, with all its data, is removed by a
-        background job once in-flight requests on it finish.
+        Deletes the company once in-flight requests on its database finish.
+        The database, with all its data, is moved to the trash first.
       tags:
         - Companies
       responses:
@@ -106,6 +108,8 @@ paths:
           description: Company deleted
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /v1/companies/{company}/slug:
     parameters:
@@ -114,9 +118,8 @@ paths:
       operationId: updateSlug
       summary: Change a company's slug
       description: |
-        The company is at its new URL straight away. Its database file,
-        named after the slug, is renamed once requests in flight on it
-        finish; meanwhile its task routes may briefly answer 503.
+        The company is at its new URL straight away. Its database file keeps
+        the name it was created with.
       tags:
         - Companies
       requestBody:
@@ -301,7 +304,8 @@ components:
           type: string
           description: |
             URL-safe key used in /v1/companies/{company}, and in the name of
-            the company's database file. Lowercase letters, digits and '-'.
+            the company's database file, which keeps that name if the slug
+            changes. Lowercase letters, digits and '-'.
           pattern: '^[a-z0-9][a-z0-9-]{0,62}$'
         name:
           type: string

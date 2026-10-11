@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mattn/go-sqlite3"
 	"github.com/riverqueue/river"
 
-	"github.com/timwmillard/golite/conv"
 	"github.com/timwmillard/golite/tenant"
 
 	"github.com/timwmillard/golite/samples/multitenant/master/model"
@@ -21,14 +21,14 @@ import (
 )
 
 // CompanyHandler implements the company operations of StrictServerInterface
-// against the master database. Each company's database is named after its
-// slug and tracked in tenant.Sync's registry under the company's id, which
+// against the master database. Each company's database is
+// company_<db_key>.db, where db_key is the slug it was created with and
 // never changes; changes reach the database through tenant.Sync jobs,
 // inserted in the same transaction as the change.
 type CompanyHandler struct {
 	master *sql.DB
 	q      *model.Queries
-	sync   *tenant.Sync
+	dbs    *tenant.DBs
 	river  *river.Client[*sql.Tx]
 
 	// notFound matches the 404 tenant.Middleware sends for an unknown
@@ -36,11 +36,11 @@ type CompanyHandler struct {
 	notFound NotFoundJSONResponse
 }
 
-func NewCompanyHandler(master *sql.DB, dbs *tenant.DBs, companySync *tenant.Sync, riverClient *river.Client[*sql.Tx]) *CompanyHandler {
+func NewCompanyHandler(master *sql.DB, dbs *tenant.DBs, riverClient *river.Client[*sql.Tx]) *CompanyHandler {
 	return &CompanyHandler{
 		master:   master,
 		q:        model.New(master),
-		sync:     companySync,
+		dbs:      dbs,
 		river:    riverClient,
 		notFound: NotFoundJSONResponse{Error: dbs.Name() + " not found"},
 	}
@@ -77,32 +77,37 @@ func (h *CompanyHandler) CreateCompany(ctx context.Context, request CreateCompan
 
 	var c model.Company
 	err := h.inTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		c, err = h.q.WithTx(tx).CreateCompany(ctx, model.CreateCompanyParams{
+		q := h.q.WithTx(tx)
+		dbKey, err := freeDBKey(ctx, q, body.Slug)
+		if err != nil {
+			return err
+		}
+		c, err = q.CreateCompany(ctx, model.CreateCompanyParams{
 			Slug:      body.Slug,
+			DbKey:     dbKey,
 			Name:      name,
 			CreatedAt: time.Now().Unix(),
 		})
 		if err != nil {
 			return err
 		}
-		ref := conv.FormatID(c.ID)
-		if err := tenant.CreateTx(ctx, h.river, tx, ref, c.Slug); err != nil {
+		if err := tenant.CreateTx(ctx, h.river, tx, c.DbKey); err != nil {
 			return err
 		}
-		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, ref, "")
+		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, c.DbKey, "")
 	})
 	if isUnique(err) {
 		return CreateCompany409JSONResponse{ConflictJSONResponse{Error: "company already exists"}}, nil
-	}
-	if errors.Is(err, tenant.ErrIDTaken) {
-		return CreateCompany409JSONResponse{ConflictJSONResponse{Error: "slug was in use until recently; try again shortly"}}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("create company: %w", err)
 	}
 
-	h.settle(ctx, c)
+	// Create the database now rather than waiting for the tenant_create
+	// job, which retries if this fails.
+	if err := h.dbs.Create(ctx, c.DbKey); err != nil {
+		slog.WarnContext(ctx, "Creating company database failed; left to tenant_create", "company", c.Slug, "err", err)
+	}
 	return CreateCompany201JSONResponse(toAPICompany(c)), nil
 }
 
@@ -131,7 +136,7 @@ func (h *CompanyHandler) UpdateCompany(ctx context.Context, request UpdateCompan
 		if err != nil {
 			return err
 		}
-		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, conv.FormatID(c.ID), "")
+		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, c.DbKey, "")
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return UpdateCompany404JSONResponse{h.notFound}, nil
@@ -143,9 +148,8 @@ func (h *CompanyHandler) UpdateCompany(ctx context.Context, request UpdateCompan
 	return UpdateCompany200JSONResponse(toAPICompany(c)), nil
 }
 
-// UpdateSlug changes a company's slug, and so the name of its database
-// file. The new slug works straight away: requests find the database
-// through the registry, which keeps the old file name until the rename.
+// UpdateSlug changes a company's slug. Its database keeps its name, from
+// db_key, so nothing moves.
 func (h *CompanyHandler) UpdateSlug(ctx context.Context, request UpdateSlugRequestObject) (UpdateSlugResponseObject, error) {
 	slug := request.Body.Slug
 	if !validSlug.MatchString(slug) {
@@ -159,57 +163,70 @@ func (h *CompanyHandler) UpdateSlug(ctx context.Context, request UpdateSlugReque
 		if err != nil {
 			return err
 		}
-		ref := conv.FormatID(c.ID)
-		if err := tenant.RenameTx(ctx, h.river, tx, ref, slug); err != nil {
-			return err
-		}
-		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, ref, "")
+		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, c.DbKey, "")
 	})
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return UpdateSlug404JSONResponse{h.notFound}, nil
 	case isUnique(err):
 		return UpdateSlug409JSONResponse{ConflictJSONResponse{Error: "slug is taken"}}, nil
-	case errors.Is(err, tenant.ErrIDTaken):
-		return UpdateSlug409JSONResponse{ConflictJSONResponse{Error: "slug was in use until recently; try again shortly"}}, nil
-	case errors.Is(err, tenant.ErrRenamePending):
-		return UpdateSlug409JSONResponse{ConflictJSONResponse{Error: "the last slug change is still being applied; try again shortly"}}, nil
 	case err != nil:
 		return nil, fmt.Errorf("update slug: %w", err)
 	}
 
-	h.settle(ctx, c)
 	return UpdateSlug200JSONResponse(toAPICompany(c)), nil
 }
 
 func (h *CompanyHandler) DeleteCompany(ctx context.Context, request DeleteCompanyRequestObject) (DeleteCompanyResponseObject, error) {
-	// Once the master row is gone no new request resolves to the company;
-	// its settle job removes the database when the ones in flight finish.
-	err := h.inTx(ctx, func(tx *sql.Tx) error {
-		c, err := h.q.WithTx(tx).DeleteCompany(ctx, request.Company)
-		if err != nil {
-			return err
-		}
-		return tenant.DeleteTx(ctx, h.river, tx, conv.FormatID(c.ID))
-	})
+	c, err := h.q.GetCompanyBySlug(ctx, request.Company)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DeleteCompany404JSONResponse{h.notFound}, nil
 	}
 	if err != nil {
+		return nil, fmt.Errorf("get company: %w", err)
+	}
+
+	// Move the database to the trash, once requests in flight on it
+	// finish, then delete the master row. In that order, a new company
+	// can't be given the db_key while the old database is still under it.
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	err = h.dbs.Delete(ctx, c.DbKey, func(ctx context.Context) error {
+		n, err := h.q.DeleteCompany(ctx, c.ID)
+		if err == nil && n == 0 {
+			err = sql.ErrNoRows // deleted meanwhile
+		}
+		return err
+	})
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return DeleteCompany404JSONResponse{h.notFound}, nil
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, tenant.ErrDeleting):
+		return DeleteCompany409JSONResponse{ConflictJSONResponse{Error: "company is busy; try again shortly"}}, nil
+	case err != nil:
 		return nil, fmt.Errorf("delete company: %w", err)
 	}
 
 	return DeleteCompany204Response{}, nil
 }
 
-// settle creates or renames c's database now rather than waiting for its
-// tenant_settle job, which retries if this fails. It waits a few seconds
-// at most for requests in flight on the database.
-func (h *CompanyHandler) settle(ctx context.Context, c model.Company) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	if err := h.sync.Settle(ctx, conv.FormatID(c.ID)); err != nil {
-		slog.WarnContext(ctx, "Settling company database failed; left to tenant_settle", "company", c.Slug, "err", err)
+// freeDBKey returns the db_key for a new company with slug: the slug,
+// unless a company that has since changed its slug still has it as its
+// db_key, in which case slug-2, slug-3 and so on.
+func freeDBKey(ctx context.Context, q *model.Queries, slug string) (string, error) {
+	for n := 1; ; n++ {
+		key := slug
+		if n > 1 {
+			suffix := "-" + strconv.Itoa(n)
+			key = slug[:min(len(slug), 64-len(suffix))] + suffix
+		}
+		taken, err := q.DBKeyTaken(ctx, key)
+		if err != nil {
+			return "", fmt.Errorf("check db_key: %w", err)
+		}
+		if !taken {
+			return key, nil
+		}
 	}
 }
 

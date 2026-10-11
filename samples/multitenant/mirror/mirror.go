@@ -1,6 +1,6 @@
 // Package mirror defines what of the master database is copied into each
 // company's database, for tenant.Sync. Handlers insert a sync job, with
-// tenant.InsertSyncTx, in the same transaction as each change to a mirrored
+// tenant.SyncTx, in the same transaction as each change to a mirrored
 // master record.
 package mirror
 
@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/timwmillard/golite/conv"
 	"github.com/timwmillard/golite/tenant"
 
 	"github.com/timwmillard/golite/samples/multitenant/companydb/model"
@@ -20,7 +19,7 @@ import (
 // Company mirrors a company's own master row into its database's one-row
 // company table, so the database describes itself in a backup or export.
 // Its sync jobs have no key: the record is the company itself, and the
-// ref is its id.
+// tenant id is its db_key.
 const Company = "company"
 
 // All returns every mirror, for tenant.SyncConfig.Mirrors.
@@ -32,15 +31,11 @@ func All(master *sql.DB) []tenant.Mirror {
 }
 
 func syncCompany(q *mastermodel.Queries) func(context.Context, *sql.Tx, string, string) error {
-	return func(ctx context.Context, tx *sql.Tx, companyID, _ string) error {
-		id, err := conv.ParseID(companyID)
+	return func(ctx context.Context, tx *sql.Tx, dbKey, _ string) error {
+		t, err := q.GetCompanyByDBKey(ctx, dbKey)
 		if err != nil {
-			return err
-		}
-		t, err := q.GetCompany(ctx, id)
-		if err != nil {
-			// Including ErrNoRows: tenant.Sync checked it's registered,
-			// so it's just been deleted, and its settle job is coming.
+			// Not ErrNoRows: tenant.Sync checked it exists, and a Delete
+			// waits for this sync to finish.
 			return fmt.Errorf("get company: %w", err)
 		}
 

@@ -10,7 +10,6 @@ import (
 
 	"github.com/riverqueue/river"
 
-	"github.com/timwmillard/golite/conv"
 	"github.com/timwmillard/golite/server"
 	"github.com/timwmillard/golite/tenant"
 
@@ -27,9 +26,9 @@ type handlers struct {
 // Register mounts the API's routes, plus the spec at GET /openapi.json, on
 // mux. The task routes, /v1/companies/{company}/tasks..., run against that
 // company's database from dbs; the rest use master.
-func Register(mux *http.ServeMux, master *sql.DB, dbs *tenant.DBs, companySync *tenant.Sync, riverClient *river.Client[*sql.Tx]) {
+func Register(mux *http.ServeMux, master *sql.DB, dbs *tenant.DBs, riverClient *river.Client[*sql.Tx]) {
 	h := NewStrictHandlerWithOptions(handlers{
-		CompanyHandler: NewCompanyHandler(master, dbs, companySync, riverClient),
+		CompanyHandler: NewCompanyHandler(master, dbs, riverClient),
 		TaskHandler:    &TaskHandler{},
 	}, nil, StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  server.RequestError,
@@ -45,9 +44,7 @@ func Register(mux *http.ServeMux, master *sql.DB, dbs *tenant.DBs, companySync *
 }
 
 // resolveCompany maps the {company} slug in the path to the company's
-// database id, through the company's id and tenant.Sync's registry: the
-// database is named after the slug it was created or last renamed with,
-// which lags a slug change until the rename is done. Only the task routes
+// database id, its db_key: the slug it was created with. Only the task routes
 // use the company's database; the others with {company} only touch the
 // master database. This is where an app would also check the caller may
 // access the company.
@@ -65,7 +62,7 @@ func resolveCompany(master *sql.DB) tenant.Resolver {
 		if err != nil {
 			return "", fmt.Errorf("resolve company: %w", err)
 		}
-		return tenant.DBID(r.Context(), master, conv.FormatID(c.ID))
+		return c.DbKey, nil
 	}
 }
 
