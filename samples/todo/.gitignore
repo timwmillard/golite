@@ -1,1 +1,31 @@
-data/
+# Runtime data: the SQLite databases (-data, default ./data)
+/data/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Scratch directories, at any depth (e.g. air's build output)
+tmp/
+
+# Local config and secrets read by server.Config
+.env
+.env.*
+!.env.example
+
+# Build and test output
+/bin/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Local Go workspace
+go.work
+go.work.sum
+
+# OS and editor files
+.DS_Store
+.idea/
+*.swp
+*~
