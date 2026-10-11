@@ -830,3 +830,74 @@ func waitFor(t *testing.T, cond func() bool) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+func TestMaintain(t *testing.T) {
+	fsys := fstest.MapFS{"0001_init.sql": testMigrations["0001_init.sql"]}
+	d := newDBs(t, Config{Migrations: fsys})
+	for _, id := range []string{"a", "gone"} {
+		if err := d.Create(t.Context(), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.Delete(t.Context(), "gone", nil); err != nil {
+		t.Fatal(err)
+	}
+	d.closeIdle(time.Now())
+
+	fsys["0002_more.sql"] = &fstest.MapFile{Data: []byte(`create table more (id integer primary key)`)}
+	if err := d.Maintain(t.Context(), 0); err != nil {
+		t.Fatalf("Maintain: %v", err)
+	}
+	if files, _ := os.ReadDir(filepath.Join(d.cfg.Dir, trashDir)); len(files) != 0 {
+		t.Errorf("trash after Maintain = %d files, want it emptied", len(files))
+	}
+	err := d.Do(t.Context(), "a", func(db *sql.DB) error {
+		_, err := db.Exec(`insert into more default values`)
+		return err
+	})
+	if err != nil {
+		t.Errorf("tenant a not migrated: %v", err)
+	}
+}
+
+// Close stops a running Maintain and waits for it, so an app can start it
+// with go and forget it.
+func TestMaintain_StoppedByClose(t *testing.T) {
+	d := newDBs(t, Config{})
+	for i := range 200 {
+		if err := d.Create(t.Context(), fmt.Sprint("t", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d.closeIdle(time.Now())
+
+	var maintErr error
+	returned := make(chan struct{})
+	go func() {
+		maintErr = d.Maintain(t.Context(), time.Hour)
+		close(returned)
+	}()
+	waitFor(t, func() bool { // under way, or already done
+		select {
+		case <-returned:
+			return true
+		default:
+			return d.Stats().Open > 0
+		}
+	})
+	if err := d.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case <-returned:
+	default:
+		t.Fatal("Close returned before Maintain did")
+	}
+	if maintErr != nil && !errors.Is(maintErr, ErrClosed) {
+		t.Errorf("Maintain stopped by Close = %v, want nil or ErrClosed", maintErr)
+	}
+
+	if err := d.Maintain(t.Context(), time.Hour); !errors.Is(err, ErrClosed) {
+		t.Errorf("Maintain after Close = %v, want ErrClosed", err)
+	}
+}

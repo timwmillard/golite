@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -114,7 +115,7 @@ func (e *syncEnv) addTenant(t *testing.T, id string) {
 		if _, err := tx.Exec(`insert into tenants (id) values (?)`, id); err != nil {
 			return err
 		}
-		return CreateTx(t.Context(), e.river, tx, id)
+		return CreateTx(t.Context(), tx, e.river, id)
 	})
 	if err != nil {
 		t.Fatalf("add tenant %s: %v", id, err)
@@ -317,6 +318,80 @@ func TestNewSync_Validates(t *testing.T) {
 	for i, cfg := range bad {
 		if _, err := NewSync(cfg); err == nil {
 			t.Errorf("config %d: NewSync succeeded, want error", i)
+		}
+	}
+}
+
+func TestSync_Run(t *testing.T) {
+	e := newSyncEnv(t, nil)
+	ctx := t.Context()
+
+	if err := e.s.Run(ctx, "copy", "acme", "k"); !errors.Is(err, ErrNotFound) || !IsNotFound(err) {
+		t.Errorf("Run for a tenant not in master = %v, want ErrNotFound", err)
+	}
+
+	e.addTenant(t, "acme")
+	if err := e.s.Run(ctx, "copy", "acme", "k"); !errors.Is(err, ErrNotExist) {
+		t.Errorf("Run before Create = %v, want ErrNotExist", err)
+	}
+
+	if err := e.d.Create(ctx, "acme"); err != nil {
+		t.Fatal(err)
+	}
+	e.setVal(t, "k", "v1")
+	if err := e.s.Run(ctx, "copy", "acme", "k"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if v, _ := e.copied(t, "acme", "k"); v != "v1" {
+		t.Errorf("copy = %q after Run, want v1", v)
+	}
+
+	if err := e.s.Run(ctx, "nope", "acme", "k"); err == nil || IsNotFound(err) {
+		t.Errorf("Run with an unknown mirror = %v, want a non-not-found error", err)
+	}
+}
+
+func TestAddStubWorkers(t *testing.T) {
+	master, err := server.OpenDB(t.Context(), filepath.Join(t.TempDir(), "master.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { master.Close() })
+	workers := river.NewWorkers()
+	AddStubWorkers(workers)
+	srv, err := server.New(t.Context(), server.Config{DB: master, Workers: workers, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := master.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := CreateTx(t.Context(), tx, srv.River, "acme"); err != nil {
+		t.Errorf("CreateTx with stub workers: %v", err)
+	}
+	if err := SyncTx(t.Context(), tx, srv.River, "copy", "acme", "k"); err != nil {
+		t.Errorf("SyncTx with stub workers: %v", err)
+	}
+
+	var cancel *river.JobCancelError
+	err = (&stubWorker[SyncArgs]{}).Work(t.Context(), &river.Job[SyncArgs]{JobRow: &rivertype.JobRow{}})
+	if !errors.As(err, &cancel) {
+		t.Errorf("stub Work = %v, want JobCancel", err)
+	}
+}
+
+func TestIsNotFound(t *testing.T) {
+	for _, err := range []error{ErrNotFound, ErrNotExist, ErrDeleting, fmt.Errorf("wrapped: %w", ErrNotExist)} {
+		if !IsNotFound(err) {
+			t.Errorf("IsNotFound(%v) = false, want true", err)
+		}
+	}
+	for _, err := range []error{nil, ErrClosed, ErrRenaming, errors.New("other")} {
+		if IsNotFound(err) {
+			t.Errorf("IsNotFound(%v) = true, want false", err)
 		}
 	}
 }

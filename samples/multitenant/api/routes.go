@@ -21,10 +21,11 @@ type handlers struct {
 
 // Register mounts the API's routes, plus the spec at GET /openapi.json, on
 // mux. The task routes, /v1/companies/{company}/tasks..., run against that
-// company's database from dbs; the rest use master.
-func Register(mux *http.ServeMux, master *sql.DB, dbs *tenant.DBs, riverClient *river.Client[*sql.Tx]) {
+// company's database from dbs; the rest use master, and sync changes to the
+// company databases with sync.
+func Register(mux *http.ServeMux, master *sql.DB, dbs *tenant.DBs, sync *tenant.Sync, riverClient *river.Client[*sql.Tx]) {
 	h := NewStrictHandlerWithOptions(handlers{
-		CompanyHandler: NewCompanyHandler(master, dbs, riverClient),
+		CompanyHandler: NewCompanyHandler(master, dbs, sync, riverClient),
 		TaskHandler:    &TaskHandler{},
 	}, nil, StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  server.RequestError,

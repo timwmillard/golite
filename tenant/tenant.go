@@ -130,8 +130,9 @@ type DBs struct {
 	entries map[string]*entry // open, opening or being deleted; nil once closed
 	idle    *list.List        // entries with no users, most recently used first
 
-	stop chan struct{} // closed by Close to stop the idle sweeper
-	done chan struct{} // closed when the sweeper has stopped
+	stop  chan struct{}  // closed by Close to stop the idle sweeper and Maintain
+	done  chan struct{}  // closed when the sweeper has stopped
+	maint sync.WaitGroup // running Maintain calls, waited for by Close
 }
 
 // entry is one tenant database. Fields other than ready, db and err are
@@ -283,8 +284,8 @@ func (d *DBs) MigrateAll(ctx context.Context) error {
 	}
 	var errs []error
 	for _, id := range ids {
-		if err := ctx.Err(); err != nil {
-			return errors.Join(append(errs, err)...)
+		if ctx.Err() != nil {
+			return errors.Join(append(errs, context.Cause(ctx))...)
 		}
 		_, release, err := d.acquire(ctx, id, modeMigrate)
 		if err != nil {
@@ -294,6 +295,45 @@ func (d *DBs) MigrateAll(ctx context.Context) error {
 		release()
 	}
 	return errors.Join(errs...)
+}
+
+// Maintain does the upkeep to run in the background after a deploy: it
+// empties the trash of databases deleted more than trashAge ago
+// (PurgeTrash), then migrates every tenant database (MigrateAll). It
+// returns their errors joined.
+//
+// Close stops it, after the tenant it's on, and waits for it to return,
+// so it can simply be started with go and left: it then returns an error
+// matching ErrClosed. It also stops if ctx is done.
+//
+//	go func() {
+//		if err := dbs.Maintain(ctx, 30*24*time.Hour); err != nil && !errors.Is(err, tenant.ErrClosed) {
+//			slog.Error("Tenant maintenance failed", "err", err)
+//		}
+//	}()
+func (d *DBs) Maintain(ctx context.Context, trashAge time.Duration) error {
+	d.mu.Lock()
+	if d.entries == nil {
+		d.mu.Unlock()
+		return ErrClosed
+	}
+	d.maint.Add(1)
+	d.mu.Unlock()
+	defer d.maint.Done()
+
+	// Stop when Close is called, with ErrClosed as the reason.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	go func() {
+		select {
+		case <-d.stop:
+			cancel(ErrClosed)
+		case <-ctx.Done():
+		}
+	}()
+
+	purgeErr := d.PurgeTrash(trashAge)
+	return errors.Join(purgeErr, d.MigrateAll(ctx))
 }
 
 func (d *DBs) acquire(ctx context.Context, id string, mode mode) (db *sql.DB, release func(), err error) {
@@ -859,6 +899,7 @@ func (d *DBs) Close() error {
 	close(d.stop)
 	d.mu.Unlock()
 	<-d.done
+	d.maint.Wait()
 
 	var errs []error
 	for _, e := range entries {

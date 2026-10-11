@@ -9,10 +9,19 @@ import (
 	"github.com/timwmillard/golite/server"
 )
 
-// ErrNotFound is returned by a Resolver when the request names a tenant
-// that doesn't exist. Middleware answers it with a 404 of
-// {"error": "<Config.Name> not found"}.
+// ErrNotFound means a tenant doesn't exist. A Resolver returns it when the
+// request names a tenant that doesn't exist, and Middleware answers it with
+// a 404 of {"error": "<Config.Name> not found"}. Sync.Run fails with it
+// for a tenant that isn't in the master database.
 var ErrNotFound = errors.New("tenant not found")
+
+// IsNotFound reports whether err means the tenant doesn't exist, as far
+// as a request is concerned: ErrNotFound, ErrNotExist (no database), or
+// ErrDeleting (being deleted). Middleware answers these with a 404; use it
+// to do the same where an app calls Acquire or Do itself.
+func IsNotFound(err error) bool {
+	return errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotExist) || errors.Is(err, ErrDeleting)
+}
 
 // Resolver returns the ID of the tenant r is for, or "" if r isn't for a
 // tenant (e.g. a route on the master database). It can also be where the
@@ -43,7 +52,7 @@ func (d *DBs) Middleware(resolve Resolver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id, err := resolve(r)
-			if errors.Is(err, ErrNotFound) {
+			if IsNotFound(err) {
 				server.WriteError(w, http.StatusNotFound, notFound)
 				return
 			}
@@ -58,7 +67,7 @@ func (d *DBs) Middleware(resolve Resolver) func(http.Handler) http.Handler {
 
 			db, release, err := d.Acquire(r.Context(), id)
 			switch {
-			case errors.Is(err, ErrNotExist), errors.Is(err, ErrDeleting):
+			case IsNotFound(err):
 				server.WriteError(w, http.StatusNotFound, notFound)
 				return
 			case err != nil:

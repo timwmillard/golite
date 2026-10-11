@@ -80,6 +80,23 @@ func (s *Sync) AddWorkers(workers *river.Workers) {
 	river.AddWorker(workers, &syncWorker{s: s})
 }
 
+// AddStubWorkers registers placeholder workers for CreateArgs and SyncArgs,
+// for tests that insert those jobs (River checks a kind has a worker when
+// it's inserted) but never work them. A stub worker cancels any job it's
+// given. To test a mirror, use Sync.Run.
+func AddStubWorkers(workers *river.Workers) {
+	river.AddWorker(workers, &stubWorker[CreateArgs]{})
+	river.AddWorker(workers, &stubWorker[SyncArgs]{})
+}
+
+type stubWorker[T river.JobArgs] struct {
+	river.WorkerDefaults[T]
+}
+
+func (*stubWorker[T]) Work(context.Context, *river.Job[T]) error {
+	return river.JobCancel(errors.New("tenant: stub worker; see AddStubWorkers"))
+}
+
 // CreateArgs is the job CreateTx inserts.
 type CreateArgs struct {
 	Tenant string `json:"tenant"`
@@ -104,7 +121,7 @@ func (SyncArgs) Kind() string { return "tenant_sync" }
 // id's database. Insert it in the transaction that adds the tenant, and
 // call DBs.Create after committing to create it straight away; the job
 // makes sure it happens even if that fails.
-func CreateTx(ctx context.Context, client *river.Client[*sql.Tx], tx *sql.Tx, id string) error {
+func CreateTx(ctx context.Context, tx *sql.Tx, client *river.Client[*sql.Tx], id string) error {
 	if !validID.MatchString(id) {
 		return fmt.Errorf("tenant: invalid id %q", id)
 	}
@@ -115,7 +132,7 @@ func CreateTx(ctx context.Context, client *river.Client[*sql.Tx], tx *sql.Tx, id
 // SyncTx inserts, in master transaction tx, a job that syncs record key of
 // mirror into tenant id's database. Insert one whenever the record is
 // created, changed or deleted.
-func SyncTx(ctx context.Context, client *river.Client[*sql.Tx], tx *sql.Tx, mirror, id, key string) error {
+func SyncTx(ctx context.Context, tx *sql.Tx, client *river.Client[*sql.Tx], mirror, id, key string) error {
 	_, err := client.InsertTx(ctx, tx, SyncArgs{Mirror: mirror, Tenant: id, Key: key}, nil)
 	return err
 }
@@ -128,7 +145,7 @@ type createWorker struct {
 func (w *createWorker) Work(ctx context.Context, job *river.Job[CreateArgs]) error {
 	id := job.Args.Tenant
 	if err := w.s.checkExists(ctx, id); err != nil {
-		return err
+		return cancelNotFound(err)
 	}
 	err := w.s.dbs.Create(ctx, id)
 	if errors.Is(err, ErrDeleting) {
@@ -140,11 +157,19 @@ func (w *createWorker) Work(ctx context.Context, job *river.Job[CreateArgs]) err
 	// If the tenant was deleted between the check and Create, Create made
 	// an empty database for nobody: put it in the trash.
 	err = w.s.checkExists(ctx, id)
-	var cancel *river.JobCancelError
-	if errors.As(err, &cancel) {
+	if errors.Is(err, ErrNotFound) {
 		if derr := w.s.dbs.Delete(ctx, id, nil); derr != nil {
 			return derr
 		}
+	}
+	return cancelNotFound(err)
+}
+
+// cancelNotFound cancels the job if err is ErrNotFound: the tenant's gone
+// from the master database, so retrying won't help.
+func cancelNotFound(err error) error {
+	if errors.Is(err, ErrNotFound) {
+		return river.JobCancel(err)
 	}
 	return err
 }
@@ -156,9 +181,40 @@ type syncWorker struct {
 
 func (w *syncWorker) Work(ctx context.Context, job *river.Job[SyncArgs]) error {
 	args := job.Args
-	m, ok := w.s.mirrors[args.Mirror]
-	if !ok {
+	if _, ok := w.s.mirrors[args.Mirror]; !ok {
 		return river.JobCancel(fmt.Errorf("unknown mirror %q", args.Mirror))
+	}
+
+	err := w.s.Run(ctx, args.Mirror, args.Tenant, args.Key)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return river.JobCancel(err) // gone from the master database
+	case errors.Is(err, ErrDeleting):
+		return river.JobSnooze(time.Second) // then it's gone, or the delete failed
+	}
+	// Including ErrNotExist: the tenant's in master but its database isn't
+	// created yet. Its tenant_create job will, and the retry finds it.
+	return err
+}
+
+// Run syncs record key of mirror into tenant id's database now, as a
+// tenant_sync job does, and returns once it's committed. Use it after
+// committing a master change to have the tenant up to date straight away,
+// e.g. right after DBs.Create for a new tenant, as Create is to CreateTx:
+// still insert the SyncTx job in the transaction, so the sync happens even
+// if Run fails. It's also how to run a sync where there's no River worker,
+// such as an offline script or a test.
+//
+// It fails with an error matching ErrNotFound if the tenant isn't in the
+// master database, and otherwise as Acquire does, e.g. ErrNotExist if
+// the tenant's database hasn't been created yet.
+//
+// Like a sync job, it holds the tenant's database while reading the
+// master database, so don't call it while holding a master transaction.
+func (s *Sync) Run(ctx context.Context, mirror, id, key string) error {
+	m, ok := s.mirrors[mirror]
+	if !ok {
+		return fmt.Errorf("tenant: unknown mirror %q", mirror)
 	}
 
 	// The tenant transaction holds its database's only connection, so
@@ -166,43 +222,39 @@ func (w *syncWorker) Work(ctx context.Context, job *river.Job[SyncArgs]) error {
 	// database after the previous one committed. Delete waits for it too,
 	// so a tenant can't be deleted between checking it exists and
 	// writing.
-	err := w.s.dbs.Do(ctx, args.Tenant, func(db *sql.DB) error {
+	err := s.dbs.Do(ctx, id, func(db *sql.DB) error {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}
 		defer tx.Rollback()
 
-		if err := w.s.checkExists(ctx, args.Tenant); err != nil {
+		if err := s.checkExists(ctx, id); err != nil {
 			return err
 		}
-		if err := m.Sync(ctx, tx, args.Tenant, args.Key); err != nil {
-			return fmt.Errorf("sync %s %q: %w", args.Mirror, args.Key, err)
+		if err := m.Sync(ctx, tx, id, key); err != nil {
+			return fmt.Errorf("sync %s %q: %w", mirror, key, err)
 		}
 		return tx.Commit()
 	})
-	switch {
-	case errors.Is(err, ErrDeleting):
-		return river.JobSnooze(time.Second) // then it's gone, or the delete failed
-	case errors.Is(err, ErrNotExist):
-		// Deleted, or not created yet: its tenant_create job will, and
-		// the retry finds it.
-		if xerr := w.s.checkExists(ctx, args.Tenant); xerr != nil {
+	if errors.Is(err, ErrNotExist) {
+		// Deleted, or not created yet: say which.
+		if xerr := s.checkExists(ctx, id); xerr != nil {
 			return xerr
 		}
 	}
 	return err
 }
 
-// checkExists returns a JobCancel error if tenant id isn't in the master
-// database.
+// checkExists returns an error matching ErrNotFound if tenant id isn't in
+// the master database.
 func (s *Sync) checkExists(ctx context.Context, id string) error {
 	exists, err := s.exists(ctx, id)
 	if err != nil {
 		return fmt.Errorf("check %s exists: %w", s.dbs.Name(), err)
 	}
 	if !exists {
-		return river.JobCancel(fmt.Errorf("%s %s no longer exists", s.dbs.Name(), id))
+		return fmt.Errorf("%s %s: %w", s.dbs.Name(), id, ErrNotFound)
 	}
 	return nil
 }

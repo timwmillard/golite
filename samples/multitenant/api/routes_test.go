@@ -29,7 +29,7 @@ func TestTaskRoutesDontUseMaster(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	Register(mux, master, dbs, nil)
+	Register(mux, master, dbs, nil, nil)
 	master.Close()
 
 	tests := []struct {

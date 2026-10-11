@@ -66,11 +66,12 @@ sample mirrors the company's master row into a one-row `company` table.
 
 | Step | How |
 |---|---|
-| Create | In the master transaction that adds the tenant, `tenant.CreateTx(ctx, river, tx, id)`; after commit, `dbs.Create(ctx, id)`. The `tenant_create` job creates it if that call fails. Only `Create` makes files. Requests, syncs and `MigrateAll` get `ErrNotExist` otherwise. |
-| Sync | `tenant.SyncTx(ctx, river, tx, mirror, id, key)` in the master transaction that changes a mirrored record. |
+| Create | In the master transaction that adds the tenant, `tenant.CreateTx(ctx, tx, river, id)` and a `SyncTx` for each record to copy in; after commit, `dbs.Create(ctx, id)` then `sync.Run(...)` for those records. The jobs do both if those calls fail. Only `Create` makes files. Requests, syncs and `MigrateAll` get `ErrNotExist` otherwise. |
+| Sync | `tenant.SyncTx(ctx, tx, river, mirror, id, key)` in the master transaction that changes a mirrored record. To have it done before responding, also `sync.Run(ctx, mirror, id, key)` after commit. |
 | Delete | `dbs.Delete(ctx, id, commit)`, where `commit` deletes the master row. |
 | Rename | Offline only: `dbs.Rename(ctx, from, to, commit)`, with the app and Litestream stopped. |
 | Clean up | `dbs.PurgeTrash(age)` removes trashed databases older than `age`. |
+| Upkeep | `go dbs.Maintain(ctx, trashAge)` at startup: `PurgeTrash`, then `MigrateAll`. `dbs.Close` stops it and waits; it then returns `ErrClosed`. |
 
 ## Delete
 
@@ -121,16 +122,21 @@ the file already at the new name and just commits.
 | Job | Does | When the tenant's not in master (`SyncConfig.Exists`) |
 |---|---|---|
 | `tenant_create` | `Create`. | Cancels. If the tenant went between the check and the create, puts the new empty file in the trash. |
-| `tenant_sync` | Opens the database, begins a transaction, checks `Exists`, runs the mirror and commits. | Cancels. |
+| `tenant_sync` | `Sync.Run`: opens the database, begins a transaction, checks `Exists`, runs the mirror and commits. | Cancels. |
 
-A sync that finds no file retries: either the create job hasn't run yet,
-or the tenant was deleted, in which case the retry cancels. A sync during
+A sync that finds no file while the tenant is in master retries: the
+create job hasn't run yet. (`Sync.Run` returns `ErrNotExist` then, and
+`ErrNotFound` if the tenant isn't in master.) A sync during
 a delete snoozes for a second. Syncs of one tenant take turns on its
 single connection, and `Delete` waits for a running one, so a sync can't
 write into a database that's being trashed.
 
 ## Rules for apps
 
+- Where the app calls `Acquire` or `Do` itself, treat `tenant.IsNotFound(err)`
+  as "no such tenant", as `Middleware` does.
+- In tests that insert `CreateTx`/`SyncTx` jobs without working them,
+  register `tenant.AddStubWorkers`; test mirrors with `Sync.Run`.
 - Insert `CreateTx` and `SyncTx` jobs in the same master transaction as
   the change they belong to.
 - Delete tenants only with `dbs.Delete` and a `commit` that removes the

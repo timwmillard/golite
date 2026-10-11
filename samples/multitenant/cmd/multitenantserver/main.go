@@ -43,7 +43,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/riverqueue/river"
@@ -107,7 +106,7 @@ func run(ctx context.Context) error {
 		return migrateAll(ctx, dbs)
 	}
 	if *renameCompany != "" {
-		return rename(ctx, dbs, master, *renameCompany)
+		return rename(ctx, dbs, master, companySync, *renameCompany)
 	}
 
 	workers := river.NewWorkers()
@@ -118,24 +117,18 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	api.Register(srv.Mux, master, dbs, srv.River)
+	api.Register(srv.Mux, master, dbs, companySync, srv.River)
 
-	// Stopped when Run returns, and waited for before dbs.Close.
-	bgCtx, cancel := context.WithCancel(ctx)
-	var wg sync.WaitGroup
-	defer wg.Wait()
-	defer cancel()
-	wg.Go(func() {
-		if err := dbs.PurgeTrash(30 * 24 * time.Hour); err != nil {
-			slog.Error("Emptying company trash failed", "err", err)
-		}
-		err := migrateAll(bgCtx, dbs)
-		if errors.Is(err, context.Canceled) {
-			slog.Info("Company migration stopped by shutdown")
+	// Empty the trash and migrate every company in the background.
+	// dbs.Close stops it and waits for it.
+	go func() {
+		err := dbs.Maintain(ctx, 30*24*time.Hour)
+		if errors.Is(err, tenant.ErrClosed) {
+			slog.Info("Company maintenance stopped by shutdown")
 		} else if err != nil {
-			slog.Error("Company migration failed", "err", err)
+			slog.Error("Company maintenance failed", "err", err)
 		}
-	})
+	}()
 
 	return srv.Run(ctx) // blocks until SIGINT/SIGTERM
 }
@@ -155,7 +148,7 @@ func migrateAll(ctx context.Context, dbs *tenant.DBs) error {
 // old:new: it renames the company's database and updates master, then
 // brings the database's copy of the company up to date. Running it again
 // after it failed partway finishes it.
-func rename(ctx context.Context, dbs *tenant.DBs, master *sql.DB, arg string) error {
+func rename(ctx context.Context, dbs *tenant.DBs, master *sql.DB, companySync *tenant.Sync, arg string) error {
 	from, to, ok := strings.Cut(arg, ":")
 	if !ok {
 		return fmt.Errorf("-rename-company %q: want old:new", arg)
@@ -173,17 +166,7 @@ func rename(ctx context.Context, dbs *tenant.DBs, master *sql.DB, arg string) er
 	}
 
 	// What a tenant_sync job would do; there's no River worker running.
-	err = dbs.Do(ctx, to, func(db *sql.DB) error {
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-		if err := mirror.SyncCompany(master)(ctx, tx, to, ""); err != nil {
-			return err
-		}
-		return tx.Commit()
-	})
+	err = companySync.Run(ctx, mirror.Company, to, "")
 	if err != nil {
 		return fmt.Errorf("update %s's copy of the company: %w", to, err)
 	}

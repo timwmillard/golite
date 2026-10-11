@@ -27,6 +27,7 @@ type CompanyHandler struct {
 	master *sql.DB
 	q      *model.Queries
 	dbs    *tenant.DBs
+	sync   *tenant.Sync
 	river  *river.Client[*sql.Tx]
 
 	// notFound matches the 404 tenant.Middleware sends for an unknown
@@ -34,11 +35,12 @@ type CompanyHandler struct {
 	notFound NotFoundJSONResponse
 }
 
-func NewCompanyHandler(master *sql.DB, dbs *tenant.DBs, riverClient *river.Client[*sql.Tx]) *CompanyHandler {
+func NewCompanyHandler(master *sql.DB, dbs *tenant.DBs, sync *tenant.Sync, riverClient *river.Client[*sql.Tx]) *CompanyHandler {
 	return &CompanyHandler{
 		master:   master,
 		q:        model.New(master),
 		dbs:      dbs,
+		sync:     sync,
 		river:    riverClient,
 		notFound: NotFoundJSONResponse{Error: dbs.Name() + " not found"},
 	}
@@ -84,10 +86,10 @@ func (h *CompanyHandler) CreateCompany(ctx context.Context, request CreateCompan
 		if err != nil {
 			return err
 		}
-		if err := tenant.CreateTx(ctx, h.river, tx, c.Slug); err != nil {
+		if err := tenant.CreateTx(ctx, tx, h.river, c.Slug); err != nil {
 			return err
 		}
-		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, c.Slug, "")
+		return tenant.SyncTx(ctx, tx, h.river, mirror.Company, c.Slug, "")
 	})
 	if isUnique(err) {
 		return CreateCompany409JSONResponse{ConflictJSONResponse{Error: "company already exists"}}, nil
@@ -96,10 +98,12 @@ func (h *CompanyHandler) CreateCompany(ctx context.Context, request CreateCompan
 		return nil, fmt.Errorf("create company: %w", err)
 	}
 
-	// Create the database now rather than waiting for the tenant_create
-	// job, which retries if this fails.
+	// Create the database and copy the company into it now, rather than
+	// waiting for the jobs, which retry if this fails.
 	if err := h.dbs.Create(ctx, c.Slug); err != nil {
 		slog.WarnContext(ctx, "Creating company database failed; left to tenant_create", "company", c.Slug, "err", err)
+	} else if err := h.sync.Run(ctx, mirror.Company, c.Slug, ""); err != nil {
+		slog.WarnContext(ctx, "Syncing company database failed; left to tenant_sync", "company", c.Slug, "err", err)
 	}
 	return CreateCompany201JSONResponse(toAPICompany(c)), nil
 }
@@ -129,7 +133,7 @@ func (h *CompanyHandler) UpdateCompany(ctx context.Context, request UpdateCompan
 		if err != nil {
 			return err
 		}
-		return tenant.SyncTx(ctx, h.river, tx, mirror.Company, c.Slug, "")
+		return tenant.SyncTx(ctx, tx, h.river, mirror.Company, c.Slug, "")
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return UpdateCompany404JSONResponse{h.notFound}, nil
