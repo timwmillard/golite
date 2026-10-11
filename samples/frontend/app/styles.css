@@ -1,0 +1,4 @@
+/* Tailwind's input. The output, static/styles.css, holds only the classes
+   used in the .templ files (rebuild with go generate). */
+@import "tailwindcss" source(none);
+@source "./**/*.templ";

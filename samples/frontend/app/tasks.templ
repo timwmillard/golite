@@ -1,0 +1,82 @@
+package app
+
+import (
+	"fmt"
+
+	"github.com/timwmillard/golite/samples/frontend/model"
+)
+
+templ indexPage(tasks []model.Task) {
+	@layout("Tasks") {
+		<h1 class="text-3xl font-semibold tracking-tight">Tasks</h1>
+		<form
+			hx-post="/tasks"
+			hx-target="#tasks"
+			hx-swap="beforeend"
+			hx-on::after-request="if (event.detail.successful) this.reset()"
+			class="mt-8 flex gap-2"
+		>
+			<input
+				name="title"
+				placeholder="What needs doing?"
+				autocomplete="off"
+				autofocus
+				class="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+			/>
+			<button
+				type="submit"
+				class="rounded-md bg-indigo-600 px-4 py-2 font-medium text-white shadow-sm hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+			>
+				Add
+			</button>
+		</form>
+		@formError("", false)
+		<ul id="tasks" class="peer mt-6 divide-y divide-slate-200 rounded-lg bg-white shadow-sm empty:hidden">
+			for _, t := range tasks {
+				@taskItem(t)
+			}
+		</ul>
+		<p class="mt-6 hidden text-center text-slate-500 peer-empty:block">Nothing to do.</p>
+	}
+}
+
+// formError shows msg under the form. With oob, it's swapped in out of band
+// by a response aimed at another element.
+templ formError(msg string, oob bool) {
+	<p
+		id="form-error"
+		if oob {
+			hx-swap-oob="true"
+		}
+		class="mt-2 min-h-5 text-sm text-red-600"
+	>{ msg }</p>
+}
+
+// createdTask is the response to adding a task: its row, plus clearing any
+// earlier error.
+templ createdTask(t model.Task) {
+	@taskItem(t)
+	@formError("", true)
+}
+
+templ taskItem(t model.Task) {
+	<li class="group flex items-center gap-3 px-4 py-3">
+		<input
+			type="checkbox"
+			checked?={ t.Done != 0 }
+			hx-post={ fmt.Sprintf("/tasks/%d/toggle", t.ID) }
+			hx-target="closest li"
+			hx-swap="outerHTML"
+			class="size-4 accent-indigo-600"
+		/>
+		<span class={ "flex-1", templ.KV("text-slate-400 line-through", t.Done != 0) }>{ t.Title }</span>
+		<button
+			hx-delete={ fmt.Sprintf("/tasks/%d", t.ID) }
+			hx-target="closest li"
+			hx-swap="outerHTML"
+			class="text-sm text-slate-400 opacity-0 hover:text-red-600 focus:opacity-100 group-hover:opacity-100"
+		>
+			Delete
+		</button>
+	</li>
+}

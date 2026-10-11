@@ -1,0 +1,10 @@
+version: 2
+sql:
+
+- schema: migrations
+  queries: queries
+  engine: sqlite
+  gen:
+    go:
+      package: model
+      out: model
