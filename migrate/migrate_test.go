@@ -176,3 +176,39 @@ func TestPragmas(t *testing.T) {
 		t.Errorf("Pragmas without pragmas.sql = %q, %v; want \"\", nil", got, err)
 	}
 }
+
+// A library's migrations, tracked in their own table, run alongside the
+// app's even though both start at 0001.
+func TestApplyTable_IndependentOfApply(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite3", t.TempDir()+"/test.db")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	lib := fstest.MapFS{"0001_lib.sql": {Data: []byte(`create table lib (id integer primary key);`)}}
+	if err := Apply(ctx, db, testMigrations); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if err := ApplyTable(ctx, db, lib, "lib_migrations"); err != nil {
+		t.Fatalf("ApplyTable: %v", err)
+	}
+	if err := ApplyTable(ctx, db, lib, "lib_migrations"); err != nil {
+		t.Fatalf("second ApplyTable: %v", err)
+	}
+
+	for table, want := range map[string]int{"schema_migrations": 2, "lib_migrations": 1, "lib": 0} {
+		var n int
+		if err := db.QueryRowContext(ctx, "select count(*) from "+table).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n != want {
+			t.Errorf("%s rows = %d, want %d", table, n, want)
+		}
+	}
+
+	if err := ApplyTable(ctx, db, lib, "bad name; drop table lib"); err == nil {
+		t.Error("ApplyTable with an invalid table name succeeded")
+	}
+}

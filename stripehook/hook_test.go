@@ -35,14 +35,16 @@ func newEnv(t *testing.T, register func(*Hook)) *env {
 	t.Helper()
 	ctx := t.Context()
 	migrations := fstest.MapFS{
-		"0001_stripe.sql": {Data: []byte(Schema)},
-		"0002_log.sql":    {Data: []byte(`create table log (event_id text not null, note text not null)`)},
+		"0001_log.sql": {Data: []byte(`create table log (event_id text not null, note text not null)`)},
 	}
 	db, err := server.OpenDB(ctx, filepath.Join(t.TempDir(), "app.db"), migrations)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
+	if err := Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	workers := river.NewWorkers()

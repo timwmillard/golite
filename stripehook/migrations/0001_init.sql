@@ -1,5 +1,3 @@
--- Copy this into one of the app's migrations (see Schema).
-
 -- Every Stripe event delivered, once each.
 create table if not exists stripe_event (
     id           text primary key not null, -- evt_...

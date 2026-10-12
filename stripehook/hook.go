@@ -8,6 +8,9 @@
 // arrived once the work is sure to happen, and River retries it until it
 // succeeds.
 //
+//	if err := stripehook.Migrate(ctx, db); err != nil { // creates stripe_event and stripe_object
+//		return err
+//	}
 //	workers := river.NewWorkers()
 //	hook := stripehook.New(stripehook.Config{DB: db, Secret: os.Getenv("STRIPE_WEBHOOK_SECRET"), Workers: workers})
 //	stripehook.On(hook, "account.updated", func(ctx context.Context, tx *sql.Tx, ev stripehook.Event, acct *stripe.Account) error {
@@ -31,7 +34,6 @@ package stripehook
 import (
 	"context"
 	"database/sql"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,13 +45,6 @@ import (
 
 	"github.com/riverqueue/river"
 )
-
-// Schema creates the stripe_event and stripe_object tables. Copy it into
-// one of the app's migrations rather than executing it, so the app's
-// migrations (and sqlc) know the tables.
-//
-//go:embed schema.sql
-var Schema string
 
 // MaxBodyBytes caps how much of a delivery is read.
 const MaxBodyBytes = 1 << 20
@@ -92,7 +87,8 @@ type HandlerFunc func(ctx context.Context, tx *sql.Tx, ev Event) error
 
 // Config configures a Hook.
 type Config struct {
-	// DB holds stripe_event and stripe_object, and River's tables.
+	// DB holds stripe_event and stripe_object (see Migrate), and River's
+	// tables.
 	DB *sql.DB
 
 	// Secret is the endpoint's signing secret (whsec_...). If it's empty,

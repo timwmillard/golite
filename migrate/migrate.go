@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,17 +30,31 @@ const pragmasFile = "pragmas.sql"
 // the highest version already recorded in schema_migrations, in ascending
 // order, each in its own transaction.
 func Apply(ctx context.Context, db *sql.DB, fsys fs.FS) error {
+	return ApplyTable(ctx, db, fsys, "schema_migrations")
+}
+
+var validTable = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// ApplyTable is Apply, recording versions in table instead of
+// schema_migrations. It's for a library that ships its own tables, such as
+// stripehook: with a table of its own, its migrations are numbered
+// independently of the app's, as River's are in river_migration.
+func ApplyTable(ctx context.Context, db *sql.DB, fsys fs.FS, table string) error {
+	if !validTable.MatchString(table) {
+		return fmt.Errorf("migrate: invalid table name %q", table)
+	}
+
 	if err := applyPragmas(ctx, db, fsys); err != nil {
 		return err
 	}
 
 	if _, err := db.ExecContext(ctx, `
-		create table if not exists schema_migrations (
+		create table if not exists `+table+` (
 			version    integer primary key,
 			applied_at integer not null
 		)
 	`); err != nil {
-		return fmt.Errorf("create schema_migrations table: %w", err)
+		return fmt.Errorf("create %s table: %w", table, err)
 	}
 
 	migrations, err := readMigrations(fsys)
@@ -48,7 +63,7 @@ func Apply(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 	}
 
 	var current int
-	row := db.QueryRowContext(ctx, `select coalesce(max(version), 0) from schema_migrations`)
+	row := db.QueryRowContext(ctx, `select coalesce(max(version), 0) from `+table)
 	if err := row.Scan(&current); err != nil {
 		return fmt.Errorf("read current schema version: %w", err)
 	}
@@ -57,7 +72,7 @@ func Apply(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 		if m.version <= current {
 			continue
 		}
-		if err := applyOne(ctx, db, m); err != nil {
+		if err := applyOne(ctx, db, table, m); err != nil {
 			return fmt.Errorf("apply migration %s: %w", m.name, err)
 		}
 	}
@@ -135,7 +150,7 @@ func readMigrations(fsys fs.FS) ([]migration, error) {
 	return migrations, nil
 }
 
-func applyOne(ctx context.Context, db *sql.DB, m migration) error {
+func applyOne(ctx context.Context, db *sql.DB, table string, m migration) error {
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("get connection: %w", err)
@@ -146,7 +161,7 @@ func applyOne(ctx context.Context, db *sql.DB, m migration) error {
 		return fmt.Errorf("begin immediate: %w", err)
 	}
 
-	if err := execMigration(ctx, conn, m); err != nil {
+	if err := execMigration(ctx, conn, table, m); err != nil {
 		if _, rbErr := conn.ExecContext(ctx, `rollback`); rbErr != nil {
 			return fmt.Errorf("%w (rollback also failed: %v)", err, rbErr)
 		}
@@ -160,12 +175,12 @@ func applyOne(ctx context.Context, db *sql.DB, m migration) error {
 	return nil
 }
 
-func execMigration(ctx context.Context, conn *sql.Conn, m migration) error {
+func execMigration(ctx context.Context, conn *sql.Conn, table string, m migration) error {
 	if _, err := conn.ExecContext(ctx, m.sql); err != nil {
 		return fmt.Errorf("exec: %w", err)
 	}
 
-	if _, err := conn.ExecContext(ctx, `insert into schema_migrations (version, applied_at) values (?, ?)`, m.version, time.Now().Unix()); err != nil {
+	if _, err := conn.ExecContext(ctx, `insert into `+table+` (version, applied_at) values (?, ?)`, m.version, time.Now().Unix()); err != nil {
 		return fmt.Errorf("record applied migration: %w", err)
 	}
 
