@@ -1,0 +1,26 @@
+# ! http expects an assert to fail, and stops at the failing entry.
+! http wrong.http
+stdout 'bad login'
+! stdout 'should not run'
+
+! http redirect.http
+
+-- wrong.http --
+POST /login
+
+{"user": "alice", "pass": "nope"}
+
+HTTP 200
+
+GET /echo?should+not+run
+
+-- redirect.http --
+# Redirects aren't followed.
+GET /old
+
+HTTP 302
+Location: /new
+
+GET /old
+
+HTTP 200

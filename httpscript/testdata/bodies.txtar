@@ -1,0 +1,54 @@
+# Request bodies, queries and forms.
+http json.http
+cmp stdout want.json
+
+http bodies.http
+
+-- json.http --
+# A JSON body gets Content-Type application/json, and blank lines and
+# indentation inside it are kept.
+PUT /echo
+[Query]
+page: 2
+q: a b
+
+{
+  "a": 1,
+
+  "b": [1, 2]
+}
+
+HTTP 200
+
+-- want.json --
+{"body":"{\n  \"a\": 1,\n\n  \"b\": [1, 2]\n}","content_type":"application/json","method":"PUT","query":{"page":["2"],"q":["a b"]}}
+-- bodies.http --
+POST /echo?x=1
+Content-Type: text/plain
+Host: example.com
+
+hello
+world
+
+HTTP 200
+X-Multi: b
+[Asserts]
+jsonpath "$.body" == "hello\nworld"
+jsonpath "$.content_type" == "text/plain"
+header "X-Host" == "example.com"
+jsonpath "$.query.x[0]" == "1"
+header "X-Multi" count == 2
+header "X-Multi" includes "a"
+
+POST /echo
+[Form]
+name: Alice Smith
+tag: a&b
+
+HTTP 200
+[Asserts]
+jsonpath "$.body" == "name=Alice+Smith&tag=a%26b"
+jsonpath "$.content_type" == "application/x-www-form-urlencoded"
+
+# No body, no response section: still sent.
+DELETE /echo
