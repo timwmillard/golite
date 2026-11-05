@@ -2,6 +2,12 @@
 
 Utility packages for my default Go + SQLite setup.
 
+> [!WARNING]
+> golite is beta and built for my own personal projects. The API is unstable and I don't guarantee to avoid breaking changes, so don't depend on it as a regular module. Instead, either:
+>
+> - **Vendor it** into each project's `internal` folder (e.g. `internal/golite`) and customise the packages, especially `server`, to suit your own needs; or
+> - **Fork it** into your own repo and maintain it from there.
+
 | Package | |
 |---|---|
 | `migrate` | Forward-only `NNNN_name.sql` migrations from an `fs.FS`, plus optional `pragmas.sql`; `ApplyTable` tracks a library's migrations in a table of its own, numbered apart from the app's |
