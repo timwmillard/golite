@@ -1,0 +1,73 @@
+# Log in, then use the captured token in a later request and file.
+http login.http
+stdout '"name":"alice"'
+
+# Captures are environment variables to the rest of the script, so
+# cmpenv sees $session.
+http again.http
+cmpenv stdout session.txt
+
+-- login.http --
+POST /login
+Content-Type: application/json
+
+{
+  "user": "alice",
+  "pass": "secret"
+}
+
+HTTP 200
+Content-Type: application/json
+[Captures]
+token: jsonpath "$.token"
+session: cookie "session"
+[Asserts]
+cookie "session" == "s-alice"
+
+# Relative URLs are resolved against {{base}}.
+GET {{base}}/me
+Authorization: Bearer {{token}}
+
+HTTP 200
+[Asserts]
+status == 200
+status < 300
+jsonpath "$.id" == 12345678901234567
+jsonpath "$.name" == "alice"
+jsonpath "$.name" != "bob"
+jsonpath "$.name" startsWith "al"
+jsonpath "$.name" endsWith "ice"
+jsonpath "$.name" contains "lic"
+jsonpath "$.name" matches /^a.+e$/
+jsonpath "$.name" matches "^A?alice$"
+jsonpath "$.name" count == 5
+jsonpath "$.admin" == true
+jsonpath "$.bio" == null
+jsonpath "$.bio" exists
+jsonpath "$.missing" not exists
+jsonpath "$.roles" count == 2
+jsonpath "$.roles" includes "dev"
+jsonpath "$.roles" not includes "ops"
+jsonpath "$.roles[0]" == "admin"
+jsonpath "$.teams[*].size" includes 5
+jsonpath "$.teams[-1].name" == "web"
+jsonpath "$.teams" not isEmpty
+header "Content-Type" startsWith "application/json"
+regex "\"name\":\"(\\w+)\"" == "alice"
+body contains "admin"
+
+-- again.http --
+GET /me
+Authorization: Bearer {{token}}
+
+HTTP 200
+
+# The cookie from /login persists.
+GET /session
+
+HTTP 200
+[Asserts]
+body == "session {{session}}\n"
+
+-- session.txt --
+session $session
